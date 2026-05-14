@@ -1,0 +1,24 @@
+{
+  "daily_abs_rank_kendall_tau": {
+    "mean": -0.46428571428571425,
+    "median": -0.46428571428571425,
+    "total_days": 2,
+    "valid_days": 2,
+    "values_by_date": {
+      "2025-11-01": -0.5714285714285714,
+      "2025-11-02": -0.3571428571428571
+    }
+  },
+  "daily_abs_rank_spearman": {
+    "mean": -0.5476190476190477,
+    "median": -0.5476190476190477,
+    "total_days": 2,
+    "valid_days": 2,
+    "values_by_date": {
+      "2025-11-01": -0.6904761904761906,
+      "2025-11-02": -0.4047619047619048
+    }
+  },
+  "global_abs_rank_kendall_tau": -0.3571428571428571,
+  "global_abs_rank_spearman": -0.5000000000000001
+}

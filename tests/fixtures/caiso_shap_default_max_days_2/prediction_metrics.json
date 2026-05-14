@@ -1,0 +1,12 @@
+{
+  "holdout": {
+    "days": 2,
+    "mae": 20.5352302776013,
+    "mean_actual_daily_regret": 15.80317508428233,
+    "mean_decision_value_gain": 0.2807274916248801,
+    "mse": 585.3104304781573,
+    "predictions": 48,
+    "rmse": 24.19318975410554,
+    "targets_per_day": 24
+  }
+}

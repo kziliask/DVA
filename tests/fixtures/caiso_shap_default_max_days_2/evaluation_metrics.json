@@ -1,0 +1,60 @@
+{
+  "decision": {
+    "decision_infidelity": {
+      "coverage": 1.0,
+      "mean": 7.4774563383009855,
+      "median": 7.4774563383009855,
+      "std": 1.7292628463838091,
+      "total_days": 2,
+      "valid_days": 2,
+      "values_by_date": {
+        "2025-11-01": 5.748193491917177,
+        "2025-11-02": 9.206719184684795
+      }
+    },
+    "decision_insertion_auc": {
+      "clipping": "clip_to_[0,v_dec(N)]",
+      "coverage": 0.5,
+      "mean": 0.7762794983335468,
+      "median": 0.7762794983335468,
+      "requires_positive_full_gain": true,
+      "std": 0.0,
+      "total_days": 2,
+      "valid_days": 1,
+      "values_by_date": {
+        "2025-11-01": null,
+        "2025-11-02": 0.7762794983335468
+      },
+      "zero_if_all_strict_prefixes_nonpositive": true
+    }
+  },
+  "predictive": {
+    "decision_infidelity": {
+      "coverage": 1.0,
+      "mean": 27087.04378890905,
+      "median": 27087.04378890905,
+      "std": 95.40156093743644,
+      "total_days": 2,
+      "valid_days": 2,
+      "values_by_date": {
+        "2025-11-01": 27182.445349846486,
+        "2025-11-02": 26991.642227971613
+      }
+    },
+    "decision_insertion_auc": {
+      "clipping": "clip_to_[0,v_dec(N)]",
+      "coverage": 0.5,
+      "mean": 0.777777786380324,
+      "median": 0.777777786380324,
+      "requires_positive_full_gain": true,
+      "std": 0.0,
+      "total_days": 2,
+      "valid_days": 1,
+      "values_by_date": {
+        "2025-11-01": null,
+        "2025-11-02": 0.777777786380324
+      },
+      "zero_if_all_strict_prefixes_nonpositive": true
+    }
+  }
+}
