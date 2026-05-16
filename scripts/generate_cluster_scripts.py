@@ -6,10 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLUSTER_ROOT = ROOT / "scripts" / "cluster"
-CAISO_NCPUS = 2
+CAISO_NCPUS = 1
 CAISO_MEM = "16gb"
-EMS_NCPUS = 2
-EMS_MEM = "32gb"
+EMS_NCPUS = 1
+EMS_MEM = "16gb"
 
 
 @dataclass(frozen=True, slots=True)

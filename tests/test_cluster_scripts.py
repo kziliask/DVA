@@ -44,11 +44,11 @@ def test_cluster_scripts_include_required_experiment_families() -> None:
 def test_cluster_scripts_use_conservative_resources() -> None:
     for pbs_path in sorted((CLUSTER_ROOT / "caiso").glob("*.pbs")):
         text = pbs_path.read_text(encoding="utf-8")
-        assert "#PBS -l select=1:ncpus=2:mem=16gb" in text
+        assert "#PBS -l select=1:ncpus=1:mem=16gb" in text
 
     for pbs_path in sorted((CLUSTER_ROOT / "ems").glob("*.pbs")):
         text = pbs_path.read_text(encoding="utf-8")
-        assert "#PBS -l select=1:ncpus=2:mem=32gb" in text
+        assert "#PBS -l select=1:ncpus=1:mem=16gb" in text
 
 
 def test_cluster_env_uses_uv_frozen_setup_and_thread_guards() -> None:

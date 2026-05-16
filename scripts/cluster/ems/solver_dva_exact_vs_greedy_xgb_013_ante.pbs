@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #PBS -N dva_solver_dva_exact_vs_greedy_xgb_013_ante
-#PBS -l select=1:ncpus=2:mem=32gb
+#PBS -l select=1:ncpus=1:mem=16gb
 #PBS -l walltime=72:00:00
 #PBS -o logs/cluster/ems/solver_dva_exact_vs_greedy_xgb_013_ante.out
 #PBS -e logs/cluster/ems/solver_dva_exact_vs_greedy_xgb_013_ante.err
