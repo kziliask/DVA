@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import shlex
 from pathlib import Path
+from typing import Any
 
 from dva.analysis.caiso_shap import (
     CaisoShapCaseStudyConfig,
@@ -22,6 +23,13 @@ from dva.case_studies.caiso.outputs import write_canonical_caiso_dva_outputs
 from dva.model.train import train_model
 
 
+def _xgb_model_ids() -> tuple[str, ...]:
+    manifest = make_model_manifest()
+    return tuple(
+        manifest.loc[manifest["model_name"].eq("xgb"), "model_id"].astype(str)
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run CAISO JointDVA and order-2 Faith-SHAP DVI.",
@@ -37,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(CAISO_BASELINE_DESIGNS),
         required=True,
     )
+    parser.add_argument("--model-id", choices=_xgb_model_ids(), default="xgb_001")
     parser.add_argument("--value-mode", choices=("post", "ante"), required=True)
     parser.add_argument("--outdir", type=Path, default=None)
     parser.add_argument("--background-days", type=int, default=365)
@@ -45,23 +54,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _default_outdir(baseline: str, value_mode: str) -> Path:
-    return Path("results/caiso/joint_dvi") / f"{baseline}_{value_mode}"
+def _default_outdir(model_id: str, baseline: str, value_mode: str) -> Path:
+    return Path("results/caiso/joint_dvi") / model_id / f"{baseline}_{value_mode}"
 
 
-def _xgb_001_record() -> dict[str, object]:
+def _xgb_model_record(model_id: str) -> dict[str, Any]:
     manifest = make_model_manifest()
-    row = manifest.loc[manifest["model_id"].eq("xgb_001")].iloc[0]
+    row = manifest.loc[
+        manifest["model_id"].eq(model_id) & manifest["model_name"].eq("xgb")
+    ].iloc[0]
     return dict(row)
 
 
 def _config_from_record(args: argparse.Namespace) -> CaisoShapCaseStudyConfig:
-    record = _xgb_001_record()
+    record = _xgb_model_record(args.model_id)
     baseline = CAISO_BASELINE_DESIGNS[args.baseline]
     return CaisoShapCaseStudyConfig(
         dataset_path=args.dataset_path,
         holdout_days=0,
-        outdir=args.outdir or _default_outdir(args.baseline, args.value_mode),
+        outdir=args.outdir or _default_outdir(args.model_id, args.baseline, args.value_mode),
         model_name="xgb",
         random_state=0,
         n_jobs=1,
@@ -83,12 +94,18 @@ def _config_from_record(args: argparse.Namespace) -> CaisoShapCaseStudyConfig:
 
 def main() -> None:
     args = build_parser().parse_args()
-    args.outdir = args.outdir or _default_outdir(args.baseline, args.value_mode)
+    args.outdir = args.outdir or _default_outdir(
+        args.model_id,
+        args.baseline,
+        args.value_mode,
+    )
     if args.dry_run:
         command = [
             "uv",
             "run",
             "dva-caiso-joint-dvi",
+            "--model-id",
+            args.model_id,
             "--baseline",
             args.baseline,
             "--value-mode",
@@ -142,7 +159,7 @@ def main() -> None:
         explain_frame=explain_frame,
         holdout_days=split.validation_days + split.test_days,
         max_days=len(explain_frame),
-        evaluation_label=f"joint_dvi_{args.baseline}_{args.value_mode}",
+        evaluation_label=f"joint_dvi_{args.model_id}_{args.baseline}_{args.value_mode}",
     )
     write_caiso_shap_case_study_outputs(outputs, config.outdir)
     write_canonical_caiso_dva_outputs(config.outdir, value_mode=args.value_mode)

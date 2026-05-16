@@ -20,8 +20,8 @@ class ClusterJob:
 
 def _jobs() -> list[ClusterJob]:
     jobs: list[ClusterJob] = []
-    for index in range(1, 26):
-        model_id = f"xgb_{index:03d}"
+    model_ids = tuple(f"xgb_{index:03d}" for index in range(1, 26))
+    for model_id in model_ids:
         jobs.append(
             ClusterJob(
                 group="caiso",
@@ -36,68 +36,79 @@ def _jobs() -> list[ClusterJob]:
                 walltime="48:00:00",
             )
         )
-    for baseline in ("conservative", "optimistic"):
+        for baseline in ("conservative", "optimistic"):
+            for mode in ("post", "ante"):
+                jobs.append(
+                    ClusterJob(
+                        group="caiso",
+                        name=f"joint_dvi_{model_id}_{baseline}_{mode}",
+                        command=(
+                            "uv run dva-caiso-joint-dvi "
+                            f"--model-id {model_id} "
+                            f"--baseline {baseline} --value-mode {mode} "
+                            f"--outdir results/caiso/joint_dvi/{model_id}/"
+                            f"{baseline}_{mode}"
+                        ),
+                        ncpus=8,
+                        mem="64gb",
+                        walltime="48:00:00",
+                    )
+                )
+    for model_id in model_ids:
+        jobs.append(
+            ClusterJob(
+                group="ems",
+                name=f"infodva_{model_id}",
+                command=(
+                    "uv run dva-ems-infodva "
+                    f"--model-id {model_id} "
+                    f"--out-root results/ems/experiment_a_infodva/{model_id} "
+                    f"--plot-root results/ems/experiment_a_infodva_plots/{model_id}"
+                ),
+                ncpus=16,
+                mem="128gb",
+                walltime="72:00:00",
+            )
+        )
         for mode in ("post", "ante"):
             jobs.append(
                 ClusterJob(
-                    group="caiso",
-                    name=f"joint_dvi_{baseline}_{mode}",
-                    command=(
-                        "uv run dva-caiso-joint-dvi "
-                        f"--baseline {baseline} --value-mode {mode} "
-                        f"--outdir results/caiso/joint_dvi/{baseline}_{mode}"
-                    ),
-                    ncpus=8,
-                    mem="64gb",
-                    walltime="48:00:00",
-                )
-            )
-    for radius in (1, 2, 3):
-        for staging in (3, 5, 8):
-            jobs.append(
-                ClusterJob(
                     group="ems",
-                    name=f"infodva_radius_{radius}_staging_{staging}",
-                    command=(
-                        "uv run dva-ems-infodva "
-                        f"--radius {radius} --staging {staging} "
-                        f"--out-root results/ems/infodva/r{radius}_p{staging}"
-                    ),
-                    ncpus=16,
-                    mem="128gb",
-                    walltime="72:00:00",
-                )
-            )
-    for solver in ("naive", "greedy"):
-        for mode in ("post", "ante"):
-            jobs.append(
-                ClusterJob(
-                    group="ems",
-                    name=f"designdva_{solver}_{mode}",
+                    name=f"joint_dvi_active_design_{model_id}_{mode}",
                     command=(
                         "uv run dva-ems-design-joint-dvi "
-                        f"--analysis-kind designdva --solver {solver} --value-mode {mode} "
-                        f"--outdir results/ems/designdva/{solver}_{mode}"
+                        "--analysis-kind joint_dvi "
+                        f"--model-id {model_id} --value-mode {mode} "
+                        "--baseline-solver exact --target-solver exact "
+                        "--baseline-radius-km 1 --target-radius-km 1 "
+                        "--baseline-staging-areas 3 --target-staging-areas 8 "
+                        f"--outdir results/ems/experiment_b_joint_dvi/{model_id}/{mode}"
                     ),
                     ncpus=16,
                     mem="128gb",
                     walltime="72:00:00",
                 )
             )
-            jobs.append(
-                ClusterJob(
-                    group="ems",
-                    name=f"joint_dvi_{solver}_{mode}",
-                    command=(
-                        "uv run dva-ems-design-joint-dvi "
-                        f"--analysis-kind joint_dvi --solver {solver} --value-mode {mode} "
-                        f"--outdir results/ems/joint_dvi/{solver}_{mode}"
-                    ),
-                    ncpus=16,
-                    mem="128gb",
-                    walltime="72:00:00",
+            for solver in ("greedy", "naive"):
+                jobs.append(
+                    ClusterJob(
+                        group="ems",
+                        name=f"solver_dva_exact_vs_{solver}_{model_id}_{mode}",
+                        command=(
+                            "uv run dva-ems-design-joint-dvi "
+                            "--analysis-kind joint_dvi "
+                            f"--model-id {model_id} --value-mode {mode} "
+                            f"--baseline-solver exact --target-solver {solver} "
+                            "--baseline-radius-km 1 --target-radius-km 1 "
+                            "--baseline-staging-areas 8 --target-staging-areas 8 "
+                            f"--outdir results/ems/experiment_c_solver_dva/"
+                            f"{model_id}/exact_vs_{solver}_{mode}"
+                        ),
+                        ncpus=16,
+                        mem="128gb",
+                        walltime="72:00:00",
+                    )
                 )
-            )
     jobs.extend(
         [
             ClusterJob(

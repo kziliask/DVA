@@ -82,7 +82,6 @@ def parameter_player_spec_for_baseline(
     baseline: CaisoStorageDesign,
 ) -> ParameterPlayerSpec:
     return ParameterPlayerSpec(
-        throughput_penalty_is_player=True,
         throughput_penalty_baseline=baseline.throughput_penalty,
         efficiency_is_player=True,
         charge_efficiency_baseline=baseline.efficiency,

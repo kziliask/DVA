@@ -23,7 +23,7 @@ def test_caiso_canonical_dvi_keeps_two_way_interactions(tmp_path) -> None:
     ).to_csv(tmp_path / "summary_shap.csv", index=False)
     pd.DataFrame(
         {
-            "players": ["min_temp_c", "min_temp_c|throughput_penalty"],
+            "players": ["min_temp_c", "min_temp_c|efficiency"],
             "subset_size": [1, 2],
             "decision_interaction_value": [3.0, 4.0],
         }
@@ -32,7 +32,7 @@ def test_caiso_canonical_dvi_keeps_two_way_interactions(tmp_path) -> None:
     write_canonical_caiso_dva_outputs(tmp_path, value_mode="post")
 
     dvi = pd.read_csv(tmp_path / "dvi_interactions.csv")
-    assert dvi["players"].tolist() == ["min_temp_c|throughput_penalty"]
+    assert dvi["players"].tolist() == ["min_temp_c|efficiency"]
     assert dvi["interaction_type"].tolist() == ["Cross-DVI"]
 
 

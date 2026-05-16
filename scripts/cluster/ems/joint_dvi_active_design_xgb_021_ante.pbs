@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#PBS -N dva_joint_dvi_active_design_xgb_021_ante
+#PBS -l select=1:ncpus=16:mem=128gb
+#PBS -l walltime=72:00:00
+#PBS -o logs/cluster/ems/joint_dvi_active_design_xgb_021_ante.out
+#PBS -e logs/cluster/ems/joint_dvi_active_design_xgb_021_ante.err
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-$(pwd)}"
+bash scripts/cluster/ems/joint_dvi_active_design_xgb_021_ante.sh

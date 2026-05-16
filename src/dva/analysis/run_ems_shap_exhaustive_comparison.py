@@ -44,6 +44,11 @@ from dva.analysis.evaluation_metrics import (
     compute_truncated_rbo,
     rank_features_from_scores,
 )
+from dva.case_studies.ems.models import (
+    EMS_XGB_MODEL_IDS,
+    ems_xgb_config_kwargs,
+    make_ems_xgb_model_manifest,
+)
 from dva.plots.compare_pred_dec import create_comparison_plots
 
 
@@ -81,6 +86,8 @@ _SOLVER_ALIASES = {
 @dataclass(frozen=True, slots=True)
 class EmsSweepSetting:
     setting_id: str
+    model_id: str
+    model_record: Mapping[str, Any]
     coverage_solver: str
     coverage_radius_km: float
     facility_budget: int
@@ -114,6 +121,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--plot-root", type=Path, default=DEFAULT_PLOT_ROOT)
+    parser.add_argument(
+        "--model-id",
+        action="append",
+        default=None,
+        choices=EMS_XGB_MODEL_IDS,
+        help="EMS XGBoost L25 model id to run. Repeat to run a subset.",
+    )
     parser.add_argument(
         "--solver",
         action="append",
@@ -233,7 +247,9 @@ def main() -> None:
         raise ValueError("--n-jobs must be strictly positive.")
     solver_seed = args.random_state if args.solver_seed is None else args.solver_seed
     solvers = _resolve_solvers(args.solver)
+    model_records = _resolve_model_records(args.model_id)
     settings = _build_sweep_settings(
+        model_records=model_records,
         solvers=solvers,
         coverage_radii_km=args.coverage_radius_km,
         facility_budgets=args.facility_budget,
@@ -296,6 +312,7 @@ def main() -> None:
             {
                 "metadata": {
                     "setting_count": len(settings),
+                    "model_ids": [str(record["model_id"]) for record in model_records],
                     "solvers": list(solvers),
                     "coverage_radii_km": [float(value) for value in args.coverage_radius_km],
                     "facility_budgets": [int(value) for value in args.facility_budget],
@@ -355,12 +372,8 @@ def _build_setting_config(
         progress_every_coalitions=args.progress_every_coalitions,
         random_state=args.random_state,
         n_jobs=args.n_jobs,
-        xgb_n_estimators=args.xgb_n_estimators,
-        xgb_max_depth=args.xgb_max_depth,
-        xgb_learning_rate=args.xgb_learning_rate,
-        xgb_subsample=args.xgb_subsample,
-        xgb_colsample_bytree=args.xgb_colsample_bytree,
-        xgb_reg_lambda=args.xgb_reg_lambda,
+        model_id=setting.model_id,
+        **ems_xgb_config_kwargs(setting.model_record),
         xgb_verbosity=args.xgb_verbosity,
         train_sample_rows=args.train_sample_rows,
         coverage_radius_km=setting.coverage_radius_km,
@@ -449,6 +462,7 @@ def _run_setting_task(
 ) -> EmsSweepRunResult:
     print(
         f"[{index}/{total}] {setting.setting_id}: "
+        f"model={setting.model_id}, "
         f"solver={setting.coverage_solver}, "
         f"radius={setting.coverage_radius_km:g}km, "
         f"budget={setting.facility_budget}",
@@ -489,8 +503,25 @@ def _resolve_solvers(raw_solvers: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(normalized_solvers))
 
 
+def _resolve_model_records(raw_model_ids: Sequence[str] | None) -> tuple[dict[str, Any], ...]:
+    manifest = make_ems_xgb_model_manifest()
+    if raw_model_ids is None:
+        selected_model_ids = list(EMS_XGB_MODEL_IDS)
+    else:
+        selected_model_ids = list(dict.fromkeys(str(model_id) for model_id in raw_model_ids))
+    records_by_id = {
+        str(record["model_id"]): dict(record)
+        for record in manifest.to_dict(orient="records")
+    }
+    unknown = sorted(set(selected_model_ids) - set(records_by_id))
+    if unknown:
+        raise ValueError("Unknown EMS model_id values: " + ", ".join(unknown))
+    return tuple(records_by_id[model_id] for model_id in selected_model_ids)
+
+
 def _build_sweep_settings(
     *,
+    model_records: Sequence[Mapping[str, Any]],
     solvers: Sequence[str],
     coverage_radii_km: Sequence[float],
     facility_budgets: Sequence[int],
@@ -498,24 +529,31 @@ def _build_sweep_settings(
     plot_root: Path,
 ) -> list[EmsSweepSetting]:
     settings: list[EmsSweepSetting] = []
-    for solver_name in solvers:
-        solver_label = _SOLVER_LABELS.get(solver_name, solver_name)
-        for radius_km in coverage_radii_km:
-            for facility_budget in facility_budgets:
-                setting_id = (
-                    f"ems_{solver_label}_radius_{_format_numeric_id(radius_km)}km_"
-                    f"budget_{int(facility_budget)}"
-                )
-                settings.append(
-                    EmsSweepSetting(
-                        setting_id=setting_id,
-                        coverage_solver=solver_name,
-                        coverage_radius_km=float(radius_km),
-                        facility_budget=int(facility_budget),
-                        results_dir=out_root / "runs" / setting_id,
-                        plots_dir=plot_root / setting_id,
+    for record in model_records:
+        model_id = str(record["model_id"])
+        for solver_name in solvers:
+            solver_label = _SOLVER_LABELS.get(solver_name, solver_name)
+            for radius_km in coverage_radii_km:
+                for facility_budget in facility_budgets:
+                    setting_id = (
+                        f"ems_{model_id}_{solver_label}_"
+                        f"radius_{_format_numeric_id(radius_km)}km_"
+                        f"budget_{int(facility_budget)}"
                     )
-                )
+                    settings.append(
+                        EmsSweepSetting(
+                            setting_id=setting_id,
+                            model_id=model_id,
+                            model_record=dict(record),
+                            coverage_solver=solver_name,
+                            coverage_radius_km=float(radius_km),
+                            facility_budget=int(facility_budget),
+                            results_dir=(
+                                out_root / "models" / model_id / "runs" / setting_id
+                            ),
+                            plots_dir=plot_root / "models" / model_id / setting_id,
+                        )
+                    )
     return settings
 
 
@@ -528,6 +566,14 @@ def _write_manifest(settings: Sequence[EmsSweepSetting], manifest_path: Path) ->
     rows = [
         {
             "setting_id": setting.setting_id,
+            "model_id": setting.model_id,
+            "model_name": setting.model_record.get("model_name"),
+            "xgb_n_estimators": setting.model_record.get("n_estimators"),
+            "xgb_max_depth": setting.model_record.get("max_depth"),
+            "xgb_learning_rate": setting.model_record.get("learning_rate"),
+            "xgb_subsample": setting.model_record.get("subsample"),
+            "xgb_colsample_bytree": setting.model_record.get("colsample_bytree"),
+            "xgb_reg_lambda": setting.model_record.get("reg_lambda"),
             "results_dir": str(setting.results_dir),
             "plots_dir": str(setting.plots_dir),
             "coverage_solver": setting.coverage_solver,
@@ -584,6 +630,7 @@ def _validate_existing_setting_metadata(
     run_metadata: dict[str, Any],
 ) -> None:
     expected_values = {
+        "model_id": setting.model_id,
         "coverage_solver": setting.coverage_solver,
         "coverage_radius_km": float(config.coverage_radius_km),
         "facility_budget": int(config.facility_budget),
@@ -646,6 +693,7 @@ def _build_setting_metric_summary(
         )
         common = {
             "setting_id": setting.setting_id,
+            "model_id": setting.model_id,
             "coverage_solver": setting.coverage_solver,
             "coverage_solver_label": _SOLVER_LABELS.get(
                 setting.coverage_solver,
@@ -720,6 +768,7 @@ def _build_setting_metric_summary(
             )
     return pd.DataFrame(rows).sort_values(
         [
+            "model_id",
             "coverage_solver_label",
             "coverage_radius_km",
             "facility_budget",
@@ -734,7 +783,12 @@ def _build_solver_vs_exact_metrics(
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     settings_by_key = {
-        (setting.coverage_solver, setting.coverage_radius_km, setting.facility_budget): setting
+        (
+            setting.model_id,
+            setting.coverage_solver,
+            setting.coverage_radius_km,
+            setting.facility_budget,
+        ): setting
         for setting in settings
     }
     exact_solver = "gurobi"
@@ -742,7 +796,12 @@ def _build_solver_vs_exact_metrics(
         if setting.coverage_solver == exact_solver:
             continue
         exact_setting = settings_by_key.get(
-            (exact_solver, setting.coverage_radius_km, setting.facility_budget)
+            (
+                setting.model_id,
+                exact_solver,
+                setting.coverage_radius_km,
+                setting.facility_budget,
+            )
         )
         if exact_setting is None:
             continue
@@ -766,6 +825,7 @@ def _build_parameter_pairwise_metrics(
         [
             {
                 "setting_id": setting.setting_id,
+                "model_id": setting.model_id,
                 "coverage_solver": setting.coverage_solver,
                 "coverage_radius_km": setting.coverage_radius_km,
                 "facility_budget": setting.facility_budget,
@@ -774,8 +834,10 @@ def _build_parameter_pairwise_metrics(
         ]
     )
     setting_by_id = {setting.setting_id: setting for setting in settings}
-    for group_key, group in frame.groupby(["coverage_solver", "facility_budget"]):
-        solver, budget = cast(tuple[Any, Any], group_key)
+    for group_key, group in frame.groupby(
+        ["model_id", "coverage_solver", "facility_budget"]
+    ):
+        model_id, solver, budget = cast(tuple[Any, Any, Any], group_key)
         sorted_group = group.sort_values("coverage_radius_km")
         for _, left_row, right_row in _neighbor_rows(sorted_group):
             rows.extend(
@@ -784,11 +846,13 @@ def _build_parameter_pairwise_metrics(
                     right_setting=setting_by_id[str(right_row["setting_id"])],
                     outputs_by_setting=outputs_by_setting,
                     comparison_kind="radius_step",
-                    sweep_id=f"{solver}_budget_{int(budget)}_radius",
+                    sweep_id=f"{model_id}_{solver}_budget_{int(budget)}_radius",
                 )
             )
-    for group_key, group in frame.groupby(["coverage_solver", "coverage_radius_km"]):
-        solver, radius = cast(tuple[Any, Any], group_key)
+    for group_key, group in frame.groupby(
+        ["model_id", "coverage_solver", "coverage_radius_km"]
+    ):
+        model_id, solver, radius = cast(tuple[Any, Any, Any], group_key)
         sorted_group = group.sort_values("facility_budget")
         for _, left_row, right_row in _neighbor_rows(sorted_group):
             rows.extend(
@@ -797,7 +861,10 @@ def _build_parameter_pairwise_metrics(
                     right_setting=setting_by_id[str(right_row["setting_id"])],
                     outputs_by_setting=outputs_by_setting,
                     comparison_kind="budget_step",
-                    sweep_id=f"{solver}_radius_{_format_numeric_id(float(radius))}_budget",
+                    sweep_id=(
+                        f"{model_id}_{solver}_"
+                        f"radius_{_format_numeric_id(float(radius))}_budget"
+                    ),
                 )
             )
     return pd.DataFrame(rows)
@@ -819,8 +886,12 @@ def _build_setting_pair_rows(
 ) -> list[dict[str, Any]]:
     left_outputs = outputs_by_setting[left_setting.setting_id]
     right_outputs = outputs_by_setting[right_setting.setting_id]
-    left_hours = tuple(str(value) for value in left_outputs.run_metadata["explained_hours"])
-    right_hours = tuple(str(value) for value in right_outputs.run_metadata["explained_hours"])
+    left_hours = tuple(
+        str(value) for value in left_outputs.run_metadata["explained_hours"]
+    )
+    right_hours = tuple(
+        str(value) for value in right_outputs.run_metadata["explained_hours"]
+    )
     if left_hours != right_hours:
         raise ValueError("Setting pair must share explained hours for comparison.")
     feature_names = tuple(left_outputs.run_metadata["player_names"])
@@ -855,6 +926,7 @@ def _build_setting_pair_rows(
             {
                 "comparison_kind": comparison_kind,
                 "sweep_id": sweep_id,
+                "model_id": left_setting.model_id,
                 "left_setting_id": left_setting.setting_id,
                 "right_setting_id": right_setting.setting_id,
                 "left_solver": left_setting.coverage_solver,
@@ -957,6 +1029,7 @@ def _build_per_hour_metric_frame(
         available_columns = [column for column in metric_columns if column in hourly.columns]
         frame = hourly.loc[:, available_columns].copy()
         frame["setting_id"] = setting.setting_id
+        frame["model_id"] = setting.model_id
         frame["coverage_solver"] = setting.coverage_solver
         frame["coverage_solver_label"] = _SOLVER_LABELS.get(
             setting.coverage_solver,
@@ -973,22 +1046,22 @@ def _build_trend_metrics(setting_summary: pd.DataFrame) -> dict[str, Any]:
     if setting_summary.empty:
         return trend_metrics
     for group_key, group in setting_summary.groupby(
-        ["coverage_solver", "facility_budget", "explainer_family"],
+        ["model_id", "coverage_solver", "facility_budget", "explainer_family"],
         sort=True,
     ):
-        solver, budget, explainer = cast(tuple[Any, Any, Any], group_key)
-        key = f"{solver}|budget={int(budget)}|{explainer}|radius"
+        model_id, solver, budget, explainer = cast(tuple[Any, Any, Any, Any], group_key)
+        key = f"{model_id}|{solver}|budget={int(budget)}|{explainer}|radius"
         sorted_group = group.sort_values("coverage_radius_km")
         trend_metrics[key] = _metric_trend_payloads(
             sorted_group,
             parameter_column="coverage_radius_km",
         )
     for group_key, group in setting_summary.groupby(
-        ["coverage_solver", "coverage_radius_km", "explainer_family"],
+        ["model_id", "coverage_solver", "coverage_radius_km", "explainer_family"],
         sort=True,
     ):
-        solver, radius, explainer = cast(tuple[Any, Any, Any], group_key)
-        key = f"{solver}|radius={float(radius):g}|{explainer}|budget"
+        model_id, solver, radius, explainer = cast(tuple[Any, Any, Any, Any], group_key)
+        key = f"{model_id}|{solver}|radius={float(radius):g}|{explainer}|budget"
         sorted_group = group.sort_values("facility_budget")
         trend_metrics[key] = _metric_trend_payloads(
             sorted_group,

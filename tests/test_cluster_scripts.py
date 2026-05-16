@@ -10,8 +10,8 @@ def test_cluster_scripts_are_static_no_array_jobs() -> None:
     pbs_files = sorted(CLUSTER_ROOT.glob("*/*.pbs"))
     shell_files = sorted(CLUSTER_ROOT.glob("*/*.sh"))
 
-    assert len(pbs_files) == 48
-    assert len(shell_files) == 48
+    assert len(pbs_files) == 302
+    assert len(shell_files) == 302
     assert (CLUSTER_ROOT / "env.sh").exists()
     for pbs_path in pbs_files:
         text = pbs_path.read_text(encoding="utf-8")
@@ -25,14 +25,14 @@ def test_cluster_scripts_include_required_experiment_families() -> None:
     expected = [
         "caiso/gdsi_xgb_001.pbs",
         "caiso/gdsi_xgb_025.pbs",
-        "caiso/joint_dvi_conservative_post.pbs",
-        "caiso/joint_dvi_optimistic_ante.pbs",
-        "ems/infodva_radius_1_staging_3.pbs",
-        "ems/infodva_radius_3_staging_8.pbs",
-        "ems/designdva_naive_post.pbs",
-        "ems/designdva_greedy_ante.pbs",
-        "ems/joint_dvi_naive_ante.pbs",
-        "ems/joint_dvi_greedy_post.pbs",
+        "caiso/joint_dvi_xgb_001_conservative_post.pbs",
+        "caiso/joint_dvi_xgb_025_optimistic_ante.pbs",
+        "ems/infodva_xgb_001.pbs",
+        "ems/infodva_xgb_025.pbs",
+        "ems/joint_dvi_active_design_xgb_001_post.pbs",
+        "ems/joint_dvi_active_design_xgb_025_ante.pbs",
+        "ems/solver_dva_exact_vs_greedy_xgb_001_ante.pbs",
+        "ems/solver_dva_exact_vs_naive_xgb_025_post.pbs",
         "ems/compute_benchmark.pbs",
         "ems/kernel_permutation_benchmark.pbs",
     ]

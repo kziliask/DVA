@@ -3,6 +3,7 @@ from __future__ import annotations
 from dva.analysis.run_ems_shap_exhaustive_comparison import (
     _build_setting_config,
     _build_sweep_settings,
+    _resolve_model_records,
     _resolve_solvers,
     build_parser,
 )
@@ -27,6 +28,7 @@ def test_exhaustive_runner_builds_parallel_no_cvar_setting_config(tmp_path) -> N
         ]
     )
     settings = _build_sweep_settings(
+        model_records=_resolve_model_records(["xgb_001"]),
         solvers=_resolve_solvers(args.solver),
         coverage_radii_km=args.coverage_radius_km,
         facility_budgets=args.facility_budget,
@@ -35,11 +37,12 @@ def test_exhaustive_runner_builds_parallel_no_cvar_setting_config(tmp_path) -> N
     )
 
     assert [setting.setting_id for setting in settings] == [
-        "ems_lp_relaxation_radius_1km_budget_3"
+        "ems_xgb_001_lp_relaxation_radius_1km_budget_3"
     ]
 
     config = _build_setting_config(settings[0], args=args, solver_seed=17)
 
+    assert config.model_id == "xgb_001"
     assert config.coverage_solver == "gurobi_lp_relaxation"
     assert config.compute_cvar_decision_shap is False
     assert config.n_jobs == 6
@@ -47,6 +50,8 @@ def test_exhaustive_runner_builds_parallel_no_cvar_setting_config(tmp_path) -> N
     assert config.outdir == (
         tmp_path
         / "results"
+        / "models"
+        / "xgb_001"
         / "runs"
-        / "ems_lp_relaxation_radius_1km_budget_3"
+        / "ems_xgb_001_lp_relaxation_radius_1km_budget_3"
     )

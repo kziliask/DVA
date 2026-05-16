@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plot-root", type=Path, default=Path("results/ems/infodva_3x3_exact_plots"))
     parser.add_argument("--radius", "--coverage-radius-km", dest="radii", action="append", type=float)
     parser.add_argument("--staging", "--facility-budget", dest="budgets", action="append", type=int)
+    parser.add_argument("--model-id", action="append", default=None)
     parser.add_argument("--holdout-hours", type=int, default=100)
     parser.add_argument("--background-rows", type=int, default=100)
     parser.add_argument("--n-jobs", type=int, default=1)
@@ -53,6 +54,8 @@ def build_forward_args(args: argparse.Namespace, passthrough: list[str]) -> list
     ]
     if args.overwrite:
         forwarded.append("--overwrite")
+    for model_id in args.model_id or ():
+        forwarded.extend(["--model-id", str(model_id)])
     forwarded.extend(passthrough)
     return forwarded
 

@@ -121,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument("--model-id", default="xgb_001")
     parser.add_argument(
         "--train-sample-rows",
         type=int,
@@ -246,6 +247,7 @@ def main() -> None:
         progress_every_coalitions=args.progress_every_coalitions,
         random_state=args.random_state,
         n_jobs=args.n_jobs,
+        model_id=args.model_id,
         xgb_n_estimators=args.xgb_n_estimators,
         xgb_max_depth=args.xgb_max_depth,
         xgb_learning_rate=args.xgb_learning_rate,

@@ -14,25 +14,51 @@ from dva.analysis.ems_exact_shap import (
     EmsExactShapConfig,
     compute_exact_shapley_values,
     load_ems_exact_shap_outputs,
+    normalize_ems_coverage_solver,
     run_ems_exact_shap,
     write_ems_exact_shap_outputs,
 )
-from dva.case_studies.ems.designs import EMS_DESIGN_ACTUALS, EMS_DESIGN_BASELINE
+from dva.case_studies.ems.designs import EMS_DESIGN_ACTUALS, EMS_DESIGN_BASELINE, EmsDesign
+from dva.case_studies.ems.models import (
+    EMS_XGB_MODEL_IDS,
+    ems_xgb_config_kwargs,
+    resolve_ems_xgb_model_record,
+)
 from dva.case_studies.ems.outputs import write_canonical_ems_dva_outputs
 from dva.games import build_design_players, build_joint_players, materialize_dvi_interactions
 
 
-DESIGN_PLAYERS = ("solver", "radius_km", "staging_areas")
+DESIGN_FIELDS = ("solver", "radius_km", "staging_areas")
+SOLVER_ALIASES = {
+    "exact": "gurobi",
+    "naive": "naive_greedy",
+    "greedy": "greedy_max_cover",
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run EMS DesignDVA or joint-DVI-oriented design sweeps.",
+        description="Run EMS DesignDVA, JointDVA, and order-2 Faith-SHAP DVI.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--analysis-kind", choices=("designdva", "joint_dvi"), required=True)
-    parser.add_argument("--solver", choices=tuple(EMS_DESIGN_ACTUALS), required=True)
+    parser.add_argument(
+        "--solver",
+        choices=tuple(EMS_DESIGN_ACTUALS),
+        default=None,
+        help=(
+            "Legacy shorthand: compare exact p=8,tau=3 baseline against the "
+            "selected heuristic p=3,tau=1 design."
+        ),
+    )
+    parser.add_argument("--model-id", choices=EMS_XGB_MODEL_IDS, default="xgb_001")
     parser.add_argument("--value-mode", choices=("post", "ante"), required=True)
+    parser.add_argument("--baseline-solver", default=None)
+    parser.add_argument("--target-solver", default=None)
+    parser.add_argument("--baseline-radius-km", type=float, default=None)
+    parser.add_argument("--target-radius-km", type=float, default=None)
+    parser.add_argument("--baseline-staging-areas", "--baseline-p", type=int, default=None)
+    parser.add_argument("--target-staging-areas", "--target-p", type=int, default=None)
     parser.add_argument("--outdir", type=Path, default=None)
     parser.add_argument("--holdout-hours", type=int, default=100)
     parser.add_argument("--max-hours", type=int, default=None)
@@ -43,38 +69,133 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _default_outdir(args: argparse.Namespace) -> Path:
+def _default_outdir(
+    args: argparse.Namespace,
+    baseline: EmsDesign,
+    actual: EmsDesign,
+    design_players: tuple[str, ...],
+) -> Path:
+    player_label = "_".join(design_players)
     return (
         Path("results/ems")
         / args.analysis_kind
-        / f"{args.solver}_{args.value_mode}"
+        / args.model_id
+        / f"{baseline.name}_to_{actual.name}_{player_label}_{args.value_mode}"
     )
 
 
-def _design_for_mask(mask: int, solver_key: str) -> dict[str, Any]:
-    actual = EMS_DESIGN_ACTUALS[solver_key]
-    baseline = EMS_DESIGN_BASELINE
-    return {
-        "solver": actual.solver if mask & 0b001 else baseline.solver,
-        "radius_km": actual.radius_km if mask & 0b010 else baseline.radius_km,
-        "staging_areas": actual.staging_areas if mask & 0b100 else baseline.staging_areas,
+def _normalize_solver_name(solver_name: str) -> str:
+    key = str(solver_name).strip().lower().replace("-", "_")
+    return normalize_ems_coverage_solver(SOLVER_ALIASES.get(key, key))
+
+
+def _design_name(design: EmsDesign) -> str:
+    solver_label = {
+        "gurobi": "exact",
+        "naive_greedy": "naive",
+        "greedy_max_cover": "greedy",
+    }.get(design.solver, design.solver)
+    return f"{solver_label}_p{int(design.staging_areas)}_tau{float(design.radius_km):g}"
+
+
+def _resolve_designs(args: argparse.Namespace) -> tuple[EmsDesign, EmsDesign]:
+    custom_design_requested = any(
+        value is not None
+        for value in (
+            args.baseline_solver,
+            args.target_solver,
+            args.baseline_radius_km,
+            args.target_radius_km,
+            args.baseline_staging_areas,
+            args.target_staging_areas,
+        )
+    )
+    if args.solver is not None and not custom_design_requested:
+        return EMS_DESIGN_BASELINE, EMS_DESIGN_ACTUALS[args.solver]
+
+    baseline = EmsDesign(
+        name="",
+        solver=_normalize_solver_name(args.baseline_solver or "exact"),
+        radius_km=float(1.0 if args.baseline_radius_km is None else args.baseline_radius_km),
+        staging_areas=int(
+            3 if args.baseline_staging_areas is None else args.baseline_staging_areas
+        ),
+    )
+    actual = EmsDesign(
+        name="",
+        solver=_normalize_solver_name(args.target_solver or "exact"),
+        radius_km=float(1.0 if args.target_radius_km is None else args.target_radius_km),
+        staging_areas=int(8 if args.target_staging_areas is None else args.target_staging_areas),
+    )
+    return (
+        EmsDesign(
+            name=_design_name(baseline),
+            solver=baseline.solver,
+            radius_km=baseline.radius_km,
+            staging_areas=baseline.staging_areas,
+        ),
+        EmsDesign(
+            name=_design_name(actual),
+            solver=actual.solver,
+            radius_km=actual.radius_km,
+            staging_areas=actual.staging_areas,
+        ),
+    )
+
+
+def _design_players_for_designs(
+    baseline: EmsDesign,
+    actual: EmsDesign,
+) -> tuple[str, ...]:
+    players = []
+    for field in DESIGN_FIELDS:
+        baseline_value = getattr(baseline, field)
+        actual_value = getattr(actual, field)
+        if isinstance(baseline_value, float) or isinstance(actual_value, float):
+            differs = not np.isclose(float(baseline_value), float(actual_value))
+        else:
+            differs = baseline_value != actual_value
+        if differs:
+            players.append(field)
+    if not players:
+        raise ValueError("EMS design comparison must change at least one design field.")
+    return tuple(players)
+
+
+def _design_for_mask(
+    mask: int,
+    *,
+    design_players: tuple[str, ...],
+    baseline: EmsDesign,
+    actual: EmsDesign,
+) -> dict[str, Any]:
+    design = {
+        "solver": baseline.solver,
+        "radius_km": baseline.radius_km,
+        "staging_areas": baseline.staging_areas,
     }
+    for player_idx, field in enumerate(design_players):
+        if mask & (1 << player_idx):
+            design[field] = getattr(actual, field)
+    return design
 
 
-def _setting_dir(outdir: Path, mask: int, design: dict[str, Any]) -> Path:
+def _setting_dir(outdir: Path, mask: int, design: dict[str, Any], player_count: int) -> Path:
     return outdir / "design_coalitions" / (
-        f"mask_{mask:03b}_{design['solver']}_"
-        f"r{float(design['radius_km']):g}_p{int(design['staging_areas'])}"
+        f"mask_{mask:0{player_count}b}_{design['solver']}_"
+        f"tau{float(design['radius_km']):g}_p{int(design['staging_areas'])}"
     )
 
 
 def _run_or_load_design_setting(
     *,
     args: argparse.Namespace,
+    model_record: dict[str, Any],
+    design_players: tuple[str, ...],
     mask: int,
     design: dict[str, Any],
 ) -> Any:
-    setting_dir = _setting_dir(args.outdir, mask, design)
+    setting_dir = _setting_dir(args.outdir, mask, design, len(design_players))
     if not args.overwrite and (setting_dir / "hourly_shap.csv").exists():
         return load_ems_exact_shap_outputs(setting_dir)
     config = EmsExactShapConfig(
@@ -83,6 +204,8 @@ def _run_or_load_design_setting(
         max_hours=args.max_hours,
         background_rows=args.background_rows,
         train_sample_rows=args.train_sample_rows,
+        model_id=args.model_id,
+        **ems_xgb_config_kwargs(model_record),
         coverage_solver=str(design["solver"]),
         coverage_radius_km=float(design["radius_km"]),
         facility_budget=int(design["staging_areas"]),
@@ -106,47 +229,51 @@ def _mean_design_value(outputs: Any, value_mode: str) -> float:
     return float(hourly["decision_full_value"].mean())
 
 
-def _write_design_dva(args: argparse.Namespace, design_values: np.ndarray) -> None:
-    shap_values = compute_exact_shapley_values(design_values - design_values[0], 3)
-    actual = EMS_DESIGN_ACTUALS[args.solver]
-    baseline = EMS_DESIGN_BASELINE
-    attr_by_player = {
-        "solver": "solver",
-        "radius_km": "radius_km",
-        "staging_areas": "staging_areas",
-    }
+def _write_design_dva(
+    args: argparse.Namespace,
+    *,
+    baseline: EmsDesign,
+    actual: EmsDesign,
+    design_players: tuple[str, ...],
+    design_values: np.ndarray,
+) -> None:
+    shap_values = compute_exact_shapley_values(
+        design_values - design_values[0],
+        len(design_players),
+    )
     rows = [
         {
             "player": player,
             "dva_value": float(value),
-            "actual": getattr(actual, attr_by_player[player]),
-            "baseline": getattr(baseline, attr_by_player[player]),
+            "actual": getattr(actual, player),
+            "baseline": getattr(baseline, player),
             "value_mode": args.value_mode,
+            "model_id": args.model_id,
         }
-        for player, value in zip(DESIGN_PLAYERS, shap_values, strict=True)
+        for player, value in zip(design_players, shap_values, strict=True)
     ]
     pd.DataFrame(rows).to_csv(args.outdir / "design_dva.csv", index=False)
     coalition_rows = []
     for mask, value in enumerate(design_values):
-        design = _design_for_mask(mask, args.solver)
+        design = _design_for_mask(
+            mask,
+            design_players=design_players,
+            baseline=baseline,
+            actual=actual,
+        )
         coalition_rows.append({"coalition_mask": mask, "design_value": float(value), **design})
     pd.DataFrame(coalition_rows).to_csv(args.outdir / "design_coalition_values.csv", index=False)
 
 
-def _design_player_set(args: argparse.Namespace) -> Any:
-    actual = EMS_DESIGN_ACTUALS[args.solver]
-    baseline = EMS_DESIGN_BASELINE
+def _design_player_set(
+    *,
+    baseline: EmsDesign,
+    actual: EmsDesign,
+    design_players: tuple[str, ...],
+) -> Any:
     return build_design_players(
-        {
-            "solver": actual.solver,
-            "radius_km": actual.radius_km,
-            "staging_areas": actual.staging_areas,
-        },
-        {
-            "solver": baseline.solver,
-            "radius_km": baseline.radius_km,
-            "staging_areas": baseline.staging_areas,
-        },
+        {field: getattr(actual, field) for field in design_players},
+        {field: getattr(baseline, field) for field in design_players},
     )
 
 
@@ -156,11 +283,22 @@ def _joint_value_column(value_mode: str) -> str:
 
 def _write_joint_dva_and_dvi(
     args: argparse.Namespace,
+    *,
+    baseline: EmsDesign,
+    actual: EmsDesign,
+    design_players: tuple[str, ...],
     outputs_by_mask: dict[int, Any],
 ) -> None:
-    reference_outputs = outputs_by_mask[0b111]
+    reference_outputs = outputs_by_mask[(1 << len(design_players)) - 1]
     info_player_names = tuple(reference_outputs.run_metadata["player_names"])
-    player_set = build_joint_players(info_player_names, _design_player_set(args))
+    player_set = build_joint_players(
+        info_player_names,
+        _design_player_set(
+            baseline=baseline,
+            actual=actual,
+            design_players=design_players,
+        ),
+    )
     info_player_count = len(info_player_names)
     value_column = _joint_value_column(args.value_mode)
 
@@ -189,7 +327,7 @@ def _write_joint_dva_and_dvi(
             if len(group) != expected_info_coalitions:
                 raise ValueError(
                     f"Expected {expected_info_coalitions} info coalitions for "
-                    f"{timestamp} and design mask {design_mask:03b}; got {len(group)}."
+                    f"{timestamp} and design mask {design_mask:b}; got {len(group)}."
                 )
             for row in group.itertuples(index=False):
                 info_mask = int(getattr(row, "coalition_mask"))
@@ -211,6 +349,7 @@ def _write_joint_dva_and_dvi(
                     "actual": player.actual,
                     "dva_value": float(value),
                     "value_mode": args.value_mode,
+                    "model_id": args.model_id,
                 }
             )
 
@@ -230,6 +369,7 @@ def _write_joint_dva_and_dvi(
                     "interaction_type": interaction.interaction_type,
                     "decision_interaction_value": float(np.asarray(interaction.value)),
                     "value_mode": args.value_mode,
+                    "model_id": args.model_id,
                 }
             )
 
@@ -243,63 +383,110 @@ def _write_joint_dva_and_dvi(
     )
     summary["dva_rank"] = np.arange(1, len(summary) + 1)
     summary["value_mode"] = args.value_mode
+    summary["model_id"] = args.model_id
     summary.to_csv(args.outdir / "joint_summary_dva.csv", index=False)
     pd.DataFrame(interaction_rows).to_csv(args.outdir / "dvi_interactions.csv", index=False)
 
 
+def _dry_run_command(args: argparse.Namespace) -> list[str]:
+    command = [
+        "uv",
+        "run",
+        "dva-ems-design-joint-dvi",
+        "--analysis-kind",
+        args.analysis_kind,
+        "--model-id",
+        args.model_id,
+        "--value-mode",
+        args.value_mode,
+        "--outdir",
+        str(args.outdir),
+    ]
+    if args.solver is not None:
+        command.extend(["--solver", args.solver])
+    for flag in (
+        "baseline_solver",
+        "target_solver",
+        "baseline_radius_km",
+        "target_radius_km",
+        "baseline_staging_areas",
+        "target_staging_areas",
+    ):
+        value = getattr(args, flag)
+        if value is None:
+            continue
+        command.extend([f"--{flag.replace('_', '-')}", str(value)])
+    if args.max_hours is not None:
+        command.extend(["--max-hours", str(args.max_hours)])
+    if args.train_sample_rows is not None:
+        command.extend(["--train-sample-rows", str(args.train_sample_rows)])
+    if args.overwrite:
+        command.append("--overwrite")
+    return command
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    args.outdir = args.outdir or _default_outdir(args)
+    baseline, actual = _resolve_designs(args)
+    design_players = _design_players_for_designs(baseline, actual)
+    args.outdir = args.outdir or _default_outdir(args, baseline, actual, design_players)
     if args.dry_run:
-        command = [
-            "uv",
-            "run",
-            "dva-ems-design-joint-dvi",
-            "--analysis-kind",
-            args.analysis_kind,
-            "--solver",
-            args.solver,
-            "--value-mode",
-            args.value_mode,
-            "--outdir",
-            str(args.outdir),
-        ]
-        if args.max_hours is not None:
-            command.extend(["--max-hours", str(args.max_hours)])
-        if args.train_sample_rows is not None:
-            command.extend(["--train-sample-rows", str(args.train_sample_rows)])
-        if args.overwrite:
-            command.append("--overwrite")
-        print(shlex.join(command))
+        print(shlex.join(_dry_run_command(args)))
         return
 
+    model_record = resolve_ems_xgb_model_record(args.model_id)
     args.outdir.mkdir(parents=True, exist_ok=True)
-    design_values = np.zeros(8, dtype=float)
+    design_count = 1 << len(design_players)
+    design_values = np.zeros(design_count, dtype=float)
     outputs_by_mask: dict[int, Any] = {}
-    for mask in range(8):
-        design = _design_for_mask(mask, args.solver)
-        outputs = _run_or_load_design_setting(args=args, mask=mask, design=design)
+    for mask in range(design_count):
+        design = _design_for_mask(
+            mask,
+            design_players=design_players,
+            baseline=baseline,
+            actual=actual,
+        )
+        outputs = _run_or_load_design_setting(
+            args=args,
+            model_record=model_record,
+            design_players=design_players,
+            mask=mask,
+            design=design,
+        )
         design_values[mask] = _mean_design_value(outputs, args.value_mode)
         outputs_by_mask[mask] = outputs
-    _write_design_dva(args, design_values)
+    _write_design_dva(
+        args,
+        baseline=baseline,
+        actual=actual,
+        design_players=design_players,
+        design_values=design_values,
+    )
     if args.analysis_kind == "joint_dvi":
-        _write_joint_dva_and_dvi(args, outputs_by_mask)
+        _write_joint_dva_and_dvi(
+            args,
+            baseline=baseline,
+            actual=actual,
+            design_players=design_players,
+            outputs_by_mask=outputs_by_mask,
+        )
     metadata = {
         "analysis_kind": args.analysis_kind,
-        "solver": args.solver,
+        "model_id": args.model_id,
+        "model_record": model_record,
         "value_mode": args.value_mode,
-        "design_players": list(DESIGN_PLAYERS),
+        "design_players": list(design_players),
         "actual_design": {
-            "name": EMS_DESIGN_ACTUALS[args.solver].name,
-            "solver": EMS_DESIGN_ACTUALS[args.solver].solver,
-            "radius_km": EMS_DESIGN_ACTUALS[args.solver].radius_km,
-            "staging_areas": EMS_DESIGN_ACTUALS[args.solver].staging_areas,
+            "name": actual.name,
+            "solver": actual.solver,
+            "radius_km": actual.radius_km,
+            "staging_areas": actual.staging_areas,
         },
         "baseline_design": {
-            "name": EMS_DESIGN_BASELINE.name,
-            "solver": EMS_DESIGN_BASELINE.solver,
-            "radius_km": EMS_DESIGN_BASELINE.radius_km,
-            "staging_areas": EMS_DESIGN_BASELINE.staging_areas,
+            "name": baseline.name,
+            "solver": baseline.solver,
+            "radius_km": baseline.radius_km,
+            "staging_areas": baseline.staging_areas,
         },
     }
     (args.outdir / "design_dva_metadata.json").write_text(

@@ -99,7 +99,9 @@ def test_caiso_design_player_baselines() -> None:
     assert optimistic.parameters().charge_efficiency == pytest.approx(1.0)
 
     spec = parameter_player_spec_for_baseline(conservative)
+    assert spec.throughput_penalty_is_player is False
     assert spec.throughput_penalty_baseline == pytest.approx(10.0)
+    assert spec.player_names() == ("efficiency", "energy_capacity")
     assert spec.energy_capacity_baseline == pytest.approx(2.0)
     assert spec.charge_efficiency_baseline == pytest.approx(0.8)
 

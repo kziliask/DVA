@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import gurobipy as gp
 import numpy as np
@@ -127,6 +127,7 @@ class EmsExactShapConfig:
     progress_every_coalitions: int = DEFAULT_PROGRESS_EVERY_COALITIONS
     random_state: int = 0
     n_jobs: int = 1
+    model_id: str = "xgb_001"
     xgb_n_estimators: int = 100
     xgb_max_depth: int = 3
     xgb_learning_rate: float = 0.05
@@ -1633,6 +1634,7 @@ def run_ems_exact_shap(config: EmsExactShapConfig) -> EmsExactShapOutputs:
         "oracle_solver": EMS_COVERAGE_SOLVER_GUROBI,
         "coverage_matrix_density": float(np.mean(coverage_matrix)),
         "model_name": "XGBRegressor",
+        "model_id": str(config.model_id),
         "xgb_params": _build_xgb_params(config),
         "random_state": config.random_state,
         "n_jobs": config.n_jobs,
@@ -1951,10 +1953,12 @@ def _build_time_split(
     ).sort_values()
     if unique_hours.empty:
         raise ValueError("EMS X table does not contain any timestamps.")
-    latest_hour = pd.Timestamp(unique_hours[-1])
-    holdout_start = (
-        latest_hour.to_period("M") - (int(test_months) - 1)
-    ).to_timestamp()
+    latest_hour = cast(pd.Timestamp, pd.Timestamp(unique_hours[-1]))
+    holdout_period = cast(
+        pd.Period,
+        latest_hour.to_period("M") - (int(test_months) - 1),
+    )
+    holdout_start = holdout_period.to_timestamp()
     is_holdout = x_frame[EMS_TIMESTAMP_COLUMN] >= holdout_start
     if not is_holdout.any():
         raise ValueError(
@@ -1978,10 +1982,16 @@ def _build_time_split(
         holdout_y=holdout_y,
         train_source_rows=tuple(int(row) for row in source_rows[~holdout_mask]),
         holdout_source_rows=tuple(int(row) for row in source_rows[holdout_mask]),
-        train_start=pd.Timestamp(train_x[EMS_TIMESTAMP_COLUMN].iloc[0]),
-        train_end=pd.Timestamp(train_x[EMS_TIMESTAMP_COLUMN].iloc[-1]),
-        holdout_start=pd.Timestamp(holdout_x[EMS_TIMESTAMP_COLUMN].iloc[0]),
-        holdout_end=pd.Timestamp(holdout_x[EMS_TIMESTAMP_COLUMN].iloc[-1]),
+        train_start=cast(pd.Timestamp, pd.Timestamp(train_x[EMS_TIMESTAMP_COLUMN].iloc[0])),
+        train_end=cast(pd.Timestamp, pd.Timestamp(train_x[EMS_TIMESTAMP_COLUMN].iloc[-1])),
+        holdout_start=cast(
+            pd.Timestamp,
+            pd.Timestamp(holdout_x[EMS_TIMESTAMP_COLUMN].iloc[0]),
+        ),
+        holdout_end=cast(
+            pd.Timestamp,
+            pd.Timestamp(holdout_x[EMS_TIMESTAMP_COLUMN].iloc[-1]),
+        ),
     )
 
 

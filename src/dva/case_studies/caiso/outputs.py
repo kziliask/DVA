@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 
-DESIGN_PLAYER_NAMES = {"throughput_penalty", "efficiency", "energy_capacity"}
+DESIGN_PLAYER_NAMES = {"efficiency", "energy_capacity"}
 
 
 def write_canonical_caiso_dva_outputs(
