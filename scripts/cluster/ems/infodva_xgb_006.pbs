@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #PBS -N dva_infodva_xgb_006
-#PBS -l select=1:ncpus=16:mem=128gb
+#PBS -l select=1:ncpus=2:mem=32gb
 #PBS -l walltime=72:00:00
 #PBS -o logs/cluster/ems/infodva_xgb_006.out
 #PBS -e logs/cluster/ems/infodva_xgb_006.err

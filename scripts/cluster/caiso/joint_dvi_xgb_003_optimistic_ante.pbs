@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #PBS -N dva_joint_dvi_xgb_003_optimistic_ante
-#PBS -l select=1:ncpus=8:mem=64gb
+#PBS -l select=1:ncpus=2:mem=16gb
 #PBS -l walltime=48:00:00
 #PBS -o logs/cluster/caiso/joint_dvi_xgb_003_optimistic_ante.out
 #PBS -e logs/cluster/caiso/joint_dvi_xgb_003_optimistic_ante.err

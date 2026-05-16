@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #PBS -N dva_solver_dva_exact_vs_naive_xgb_024_post
-#PBS -l select=1:ncpus=16:mem=128gb
+#PBS -l select=1:ncpus=2:mem=32gb
 #PBS -l walltime=72:00:00
 #PBS -o logs/cluster/ems/solver_dva_exact_vs_naive_xgb_024_post.out
 #PBS -e logs/cluster/ems/solver_dva_exact_vs_naive_xgb_024_post.err

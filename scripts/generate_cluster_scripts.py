@@ -6,6 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLUSTER_ROOT = ROOT / "scripts" / "cluster"
+CAISO_NCPUS = 2
+CAISO_MEM = "16gb"
+EMS_NCPUS = 2
+EMS_MEM = "32gb"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +35,8 @@ def _jobs() -> list[ClusterJob]:
                     f"--model-id {model_id} "
                     f"--outdir results/caiso/gdsi/{model_id}"
                 ),
-                ncpus=8,
-                mem="64gb",
+                ncpus=CAISO_NCPUS,
+                mem=CAISO_MEM,
                 walltime="48:00:00",
             )
         )
@@ -49,8 +53,8 @@ def _jobs() -> list[ClusterJob]:
                             f"--outdir results/caiso/joint_dvi/{model_id}/"
                             f"{baseline}_{mode}"
                         ),
-                        ncpus=8,
-                        mem="64gb",
+                        ncpus=CAISO_NCPUS,
+                        mem=CAISO_MEM,
                         walltime="48:00:00",
                     )
                 )
@@ -65,8 +69,8 @@ def _jobs() -> list[ClusterJob]:
                     f"--out-root results/ems/experiment_a_infodva/{model_id} "
                     f"--plot-root results/ems/experiment_a_infodva_plots/{model_id}"
                 ),
-                ncpus=16,
-                mem="128gb",
+                ncpus=EMS_NCPUS,
+                mem=EMS_MEM,
                 walltime="72:00:00",
             )
         )
@@ -84,8 +88,8 @@ def _jobs() -> list[ClusterJob]:
                         "--baseline-staging-areas 3 --target-staging-areas 8 "
                         f"--outdir results/ems/experiment_b_joint_dvi/{model_id}/{mode}"
                     ),
-                    ncpus=16,
-                    mem="128gb",
+                    ncpus=EMS_NCPUS,
+                    mem=EMS_MEM,
                     walltime="72:00:00",
                 )
             )
@@ -104,8 +108,8 @@ def _jobs() -> list[ClusterJob]:
                             f"--outdir results/ems/experiment_c_solver_dva/"
                             f"{model_id}/exact_vs_{solver}_{mode}"
                         ),
-                        ncpus=16,
-                        mem="128gb",
+                        ncpus=EMS_NCPUS,
+                        mem=EMS_MEM,
                         walltime="72:00:00",
                     )
                 )
@@ -115,8 +119,8 @@ def _jobs() -> list[ClusterJob]:
                 group="ems",
                 name="compute_benchmark",
                 command="uv run dva-ems-compute-benchmark --outdir results/ems/compute_benchmark",
-                ncpus=16,
-                mem="128gb",
+                ncpus=EMS_NCPUS,
+                mem=EMS_MEM,
                 walltime="72:00:00",
             ),
             ClusterJob(
@@ -126,8 +130,8 @@ def _jobs() -> list[ClusterJob]:
                     "uv run dva-ems-kernel-permutation-benchmark "
                     "--outdir results/ems/kernel_permutation_benchmark"
                 ),
-                ncpus=16,
-                mem="128gb",
+                ncpus=EMS_NCPUS,
+                mem=EMS_MEM,
                 walltime="72:00:00",
             ),
         ]
