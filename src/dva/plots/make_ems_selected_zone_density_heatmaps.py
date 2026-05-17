@@ -32,7 +32,9 @@ METHOD_LABELS = {
 SOLVER_TO_METHOD = {
     "naive_greedy": "naive",
     "greedy_max_cover": "greedy",
+    "lp_relaxation": "lp_relaxation",
     "gurobi_lp_relaxation": "lp_relaxation",
+    "exact": "exact",
     "gurobi": "exact",
 }
 PANEL_EDGE_COLOR = "#363636"

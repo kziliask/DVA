@@ -54,7 +54,18 @@ def test_cluster_scripts_use_conservative_resources() -> None:
 def test_cluster_env_uses_uv_frozen_setup_and_thread_guards() -> None:
     env_text = (CLUSTER_ROOT / "env.sh").read_text(encoding="utf-8")
 
-    assert "uv sync --frozen" in env_text
+    assert "UV_SYNC_ARGS=(--frozen)" in env_text
+    assert 'UV_SYNC_ARGS+=(--extra gurobi)' in env_text
+    assert 'uv sync "${UV_SYNC_ARGS[@]}"' in env_text
     assert 'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"' in env_text
-    assert 'export GUROBI_THREADS="${GUROBI_THREADS:-1}"' in env_text
+    assert 'export SOLVER_THREADS="${SOLVER_THREADS:-${GUROBI_THREADS:-1}}"' in env_text
+    assert 'export GUROBI_THREADS="${GUROBI_THREADS:-${SOLVER_THREADS}}"' in env_text
+    assert 'export OPTIMIZATION_SOLVER="${OPTIMIZATION_SOLVER:-highs}"' in env_text
     assert "mkdir -p logs/cluster results" in env_text
+
+
+def test_ems_cluster_scripts_pass_pyomo_solver_controls() -> None:
+    for shell_path in sorted((CLUSTER_ROOT / "ems").glob("*.sh")):
+        text = shell_path.read_text(encoding="utf-8")
+        assert '--optimization-solver "${OPTIMIZATION_SOLVER}"' in text
+        assert '--solver-threads "${SOLVER_THREADS}"' in text

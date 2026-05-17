@@ -57,8 +57,8 @@ DEFAULT_OUTPUT_DIR = Path("results/ems_decision_shap_timing_benchmark")
 DEFAULT_SOLVERS = (
     "naive_greedy",
     "greedy_max_cover",
-    "gurobi_lp_relaxation",
-    "gurobi",
+    "lp_relaxation",
+    "exact",
 )
 DEFAULT_COVERAGE_RADII_KM = (2.0,)
 DEFAULT_FACILITY_BUDGETS = (5,)
@@ -69,17 +69,19 @@ DEFAULT_BENCHMARK_SEED = 20_260_510
 _SOLVER_LABELS = {
     "naive_greedy": "naive",
     "greedy_max_cover": "greedy",
-    "gurobi_lp_relaxation": "lp_relaxation",
-    "gurobi": "exact",
+    "lp_relaxation": "lp_relaxation",
+    "exact": "exact",
 }
 _SOLVER_ALIASES = {
-    "exact": "gurobi",
+    "exact": "exact",
+    "gurobi": "exact",
     "naive": "naive_greedy",
     "greedy": "greedy_max_cover",
-    "linear_relaxation": "gurobi_lp_relaxation",
-    "lp": "gurobi_lp_relaxation",
-    "lp_relaxation": "gurobi_lp_relaxation",
-    "relaxation": "gurobi_lp_relaxation",
+    "gurobi_lp_relaxation": "lp_relaxation",
+    "linear_relaxation": "lp_relaxation",
+    "lp": "lp_relaxation",
+    "lp_relaxation": "lp_relaxation",
+    "relaxation": "lp_relaxation",
 }
 
 
@@ -171,7 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xgb-verbosity", type=int, default=0)
     parser.add_argument("--mip-gap", type=float, default=0.0)
     parser.add_argument("--mip-gap-abs", type=float, default=1e-9)
-    parser.add_argument("--gurobi-threads", type=int, default=1)
+    parser.add_argument("--solver-threads", "--gurobi-threads", dest="gurobi_threads", type=int, default=1)
+    parser.add_argument("--optimization-solver", choices=("highs", "gurobi"), default="highs")
     parser.add_argument(
         "--objective-tolerance",
         type=float,
@@ -364,6 +367,7 @@ def _build_base_config(args: argparse.Namespace, *, solver_seed: int) -> EmsExac
         mip_gap=args.mip_gap,
         mip_gap_abs=args.mip_gap_abs,
         gurobi_threads=args.gurobi_threads,
+        optimization_solver=args.optimization_solver,
         objective_tolerance=args.objective_tolerance,
         coverage_solver=DEFAULT_SOLVERS[0],
         excluded_zip_codes=tuple(str(zip_code) for zip_code in args.exclude_zip_codes),
@@ -769,7 +773,7 @@ def _bootstrap_mean_ci(
 
 def _build_speedup_frame(raw_timing: pd.DataFrame) -> pd.DataFrame:
     exact = raw_timing.loc[
-        raw_timing["coverage_solver"].eq("gurobi"),
+        raw_timing["coverage_solver"].eq("exact"),
         ["repetition", "setting_id", "hour_index", "attribution_seconds"],
     ].rename(columns={"attribution_seconds": "exact_attribution_seconds"})
     if exact.empty:
@@ -1066,7 +1070,7 @@ def _jsonable_vars(args: argparse.Namespace) -> dict[str, Any]:
 
 def _software_metadata() -> dict[str, Any]:
     packages = {}
-    for package_name in ("numpy", "pandas", "scikit-learn", "xgboost", "gurobipy"):
+    for package_name in ("numpy", "pandas", "scikit-learn", "xgboost", "pyomo", "highspy", "gurobipy"):
         try:
             packages[package_name] = importlib.metadata.version(package_name)
         except importlib.metadata.PackageNotFoundError:

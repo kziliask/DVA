@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyomo.environ as pyo
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.exceptions import ConvergenceWarning
 
@@ -38,6 +39,17 @@ from dva.model.train import (
     load_default_random_forest_train_explain_split,
     train_model,
 )
+
+
+def _require_gurobi() -> None:
+    try:
+        import gurobipy as gp
+
+        model = gp.Model()
+        model.Params.OutputFlag = 0
+        model.dispose()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise unittest.SkipTest(f"Gurobi unavailable: {exc}") from exc
 
 
 class ExactRandomForestCoalitionEvaluatorTests(unittest.TestCase):
@@ -130,17 +142,17 @@ class StorageDispatchLexicographicTests(unittest.TestCase):
         )
 
         storage_model = build_storage_dispatch_model([1.0, -1.0], parameters)
-        storage_model.model.update()
-        constraint_names = {
-            constraint.ConstrName for constraint in storage_model.model.getConstrs()
-        }
+        constraint_names = set(storage_model.model.component_map(pyo.Constraint))
+        binary_count = sum(
+            1
+            for variable in storage_model.model.component_data_objects(pyo.Var)
+            if variable.is_binary()
+        )
 
-        self.assertEqual(storage_model.model.NumBinVars, 2)
-        self.assertIn("charge_limit[1]", constraint_names)
-        self.assertIn("discharge_limit[1]", constraint_names)
-        self.assertNotIn("shared_power_limit[1]", constraint_names)
-
-        storage_model.model.dispose()
+        self.assertEqual(binary_count, 2)
+        self.assertIn("charge_limit", constraint_names)
+        self.assertIn("discharge_limit", constraint_names)
+        self.assertNotIn("shared_power_limit", constraint_names)
 
     def test_throughput_penalty_at_least_one_uses_relaxed_constraints(self) -> None:
         parameters = StorageDispatchParameters(
@@ -154,18 +166,18 @@ class StorageDispatchLexicographicTests(unittest.TestCase):
         )
 
         storage_model = build_storage_dispatch_model([1.0, -1.0], parameters)
-        storage_model.model.update()
-        constraint_names = {
-            constraint.ConstrName for constraint in storage_model.model.getConstrs()
-        }
+        constraint_names = set(storage_model.model.component_map(pyo.Constraint))
+        binary_count = sum(
+            1
+            for variable in storage_model.model.component_data_objects(pyo.Var)
+            if variable.is_binary()
+        )
 
-        self.assertEqual(storage_model.model.NumBinVars, 0)
+        self.assertEqual(binary_count, 0)
         self.assertIsNone(storage_model.mode)
-        self.assertIn("shared_power_limit[1]", constraint_names)
-        self.assertNotIn("charge_limit[1]", constraint_names)
-        self.assertNotIn("discharge_limit[1]", constraint_names)
-
-        storage_model.model.dispose()
+        self.assertIn("shared_power_limit", constraint_names)
+        self.assertNotIn("charge_limit", constraint_names)
+        self.assertNotIn("discharge_limit", constraint_names)
 
     def test_relaxed_dispatch_still_returns_binary_mode_proxy(self) -> None:
         parameters = StorageDispatchParameters(
@@ -261,6 +273,7 @@ class StorageDispatchLexicographicTests(unittest.TestCase):
 
 class StorageDispatchSPOTests(unittest.TestCase):
     def test_spo_model_uses_relaxed_constraints_when_penalty_is_at_least_one(self) -> None:
+        _require_gurobi()
         parameters = StorageDispatchParameters(
             energy_capacity=2.0,
             power_limit=1.0,
@@ -299,6 +312,7 @@ class StorageDispatchSPOTests(unittest.TestCase):
         )
 
     def test_spo_training_targets_match_dispatch_solution_and_objective(self) -> None:
+        _require_gurobi()
         prices = np.array([[1.0, 10.0]], dtype=np.float32)
         parameters = StorageDispatchParameters(
             energy_capacity=1.0,
@@ -345,6 +359,7 @@ class StorageDispatchSPOTests(unittest.TestCase):
         )
 
     def test_spo_plus_loss_is_near_zero_for_perfect_price_predictions(self) -> None:
+        _require_gurobi()
         import pyepo.func as pyepo_func
         import torch
 
@@ -410,6 +425,7 @@ class StorageDispatchSPOTests(unittest.TestCase):
         )
 
     def test_train_model_spo_mlp_returns_price_predictions(self) -> None:
+        _require_gurobi()
         X_train = pd.DataFrame(
             {
                 "f0": [0.0, 1.0, 0.0],
@@ -478,6 +494,7 @@ class StorageDispatchSPOTests(unittest.TestCase):
         self.assertIn("XGBRegressor", artifacts.model_description)
 
     def test_train_model_spo_mlp_verbose_prints_progress(self) -> None:
+        _require_gurobi()
         X_train = pd.DataFrame(
             {
                 "f0": [0.0, 1.0],
@@ -521,6 +538,7 @@ class StorageDispatchSPOTests(unittest.TestCase):
         self.assertIn("spo_processes=1", output)
 
     def test_train_model_spo_mlp_warm_start_with_mse_verbose_prints_both_phases(self) -> None:
+        _require_gurobi()
         X_train = pd.DataFrame(
             {
                 "f0": [0.0, 1.0],
@@ -1078,6 +1096,7 @@ class CaisoCaseStudySmokeTests(unittest.TestCase):
         self.assertEqual(outputs.run_metadata["explain_rows"], 1)
 
     def test_one_day_spo_mlp_case_study_smoke_run_produces_outputs(self) -> None:
+        _require_gurobi()
         outputs = run_caiso_shap_case_study(
             CaisoShapCaseStudyConfig(
                 model_name="spo_mlp",
@@ -1098,6 +1117,7 @@ class CaisoCaseStudySmokeTests(unittest.TestCase):
         self.assertEqual(outputs.run_metadata["explain_rows"], 1)
 
     def test_one_day_spo_mlp_case_study_with_mse_warm_start_records_flag(self) -> None:
+        _require_gurobi()
         outputs = run_caiso_shap_case_study(
             CaisoShapCaseStudyConfig(
                 model_name="spo_mlp",

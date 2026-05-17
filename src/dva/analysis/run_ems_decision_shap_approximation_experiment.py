@@ -117,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--facility-budget", type=int, default=DEFAULT_FACILITY_BUDGET)
     parser.add_argument(
         "--solver",
-        default="gurobi",
+        default="exact",
         help="Deterministic EMS coverage solver for the decision game.",
     )
     parser.add_argument("--holdout-hours", type=int, default=DEFAULT_HOLDOUT_HOURS)
@@ -141,7 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xgb-verbosity", type=int, default=0)
     parser.add_argument("--mip-gap", type=float, default=0.0)
     parser.add_argument("--mip-gap-abs", type=float, default=1e-9)
-    parser.add_argument("--gurobi-threads", type=int, default=1)
+    parser.add_argument("--solver-threads", "--gurobi-threads", dest="gurobi_threads", type=int, default=1)
+    parser.add_argument("--optimization-solver", choices=("highs", "gurobi"), default="highs")
     parser.add_argument(
         "--objective-tolerance",
         type=float,
@@ -339,6 +340,7 @@ def _build_config(
         mip_gap=args.mip_gap,
         mip_gap_abs=args.mip_gap_abs,
         gurobi_threads=args.gurobi_threads,
+        optimization_solver=args.optimization_solver,
         objective_tolerance=args.objective_tolerance,
         coverage_solver=coverage_solver,
         excluded_zip_codes=tuple(str(zip_code) for zip_code in args.exclude_zip_codes),

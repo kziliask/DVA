@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-import gurobipy as gp
 import numpy as np
-from gurobipy import GRB
+import pyomo.environ as pyo
 from pyepo.model.grb.grbmodel import optGrbModel
+
+from dva.optimization import (
+    DEFAULT_OPTIMIZATION_SOLVER,
+    normalize_optimization_solver,
+    require_pyomo_optimal,
+    solve_pyomo_model,
+)
 
 RELAXED_THROUGHPUT_PENALTY_THRESHOLD = 1.0
 
@@ -25,15 +31,18 @@ class StorageDispatchParameters:
 
 @dataclass(slots=True)
 class StorageDispatchModel:
-    model: gp.Model
+    model: pyo.ConcreteModel
     prices: tuple[float, ...]
     parameters: StorageDispatchParameters
-    charge: gp.tupledict
-    discharge: gp.tupledict
-    state_of_charge: gp.tupledict
-    mode: gp.tupledict | None
-    revenue_expression: gp.LinExpr
-    throughput_expression: gp.LinExpr
+    charge: pyo.Var
+    discharge: pyo.Var
+    state_of_charge: pyo.Var
+    mode: pyo.Var | None
+    revenue_expression: pyo.Expression
+    throughput_expression: pyo.Expression
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER
+    solver_params: dict[str, float | int | str] | None = None
+    log_to_console: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,14 +78,18 @@ class StorageDispatchSPOModel(optGrbModel):
         *,
         solver_params: Mapping[str, float | int | str] | None = None,
     ) -> None:
+        _require_gurobi_for_spo()
         self.parameters = parameters
         self.horizon = horizon
         self.solver_params = dict(solver_params or {})
         super().__init__()
 
-    def _getModel(self) -> tuple[gp.Model, dict[int, gp.Var]]:
+    def _getModel(self) -> tuple[Any, dict[int, Any]]:
+        gp, GRB = _require_gurobi_for_spo()
         _validate_inputs([0.0] * self.horizon, self.parameters)
-        model, charge, discharge, _, _ = _build_storage_dispatch_core_model(
+        model, charge, discharge, _, _ = _build_storage_dispatch_gurobi_core_model(
+            gp=gp,
+            GRB=GRB,
             horizon=self.horizon,
             parameters=self.parameters,
             name="storage_dispatch_spo",
@@ -128,6 +141,7 @@ def build_spo_training_targets(
     verbose: bool = False,
     log_every: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    _require_gurobi_for_spo()
     price_matrix = np.asarray(prices, dtype=np.float32)
     if price_matrix.ndim == 1:
         price_matrix = price_matrix[np.newaxis, :]
@@ -184,20 +198,29 @@ def build_storage_dispatch_model(
     name: str = "storage_dispatch",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
 ) -> StorageDispatchModel:
     prices = _validate_inputs(predicted_prices=predicted_prices, parameters=parameters)
     model, charge, discharge, state_of_charge, mode = _build_storage_dispatch_core_model(
         horizon=len(prices),
         parameters=parameters,
         name=name,
-        log_to_console=log_to_console,
-        solver_params=solver_params,
     )
 
     hours = range(1, len(prices) + 1)
-    revenue = gp.quicksum(prices[hour - 1] * (discharge[hour] - charge[hour]) for hour in hours)
-    throughput = gp.quicksum(charge[hour] + discharge[hour] for hour in hours)
-    model.setObjective(revenue - parameters.throughput_penalty * throughput, GRB.MAXIMIZE)
+    model.revenue_expression = pyo.Expression(
+        expr=sum(prices[hour - 1] * (discharge[hour] - charge[hour]) for hour in hours)
+    )
+    model.throughput_expression = pyo.Expression(
+        expr=sum(charge[hour] + discharge[hour] for hour in hours)
+    )
+    model.objective = pyo.Objective(
+        expr=(
+            model.revenue_expression
+            - parameters.throughput_penalty * model.throughput_expression
+        ),
+        sense=pyo.maximize,
+    )
 
     return StorageDispatchModel(
         model=model,
@@ -207,8 +230,11 @@ def build_storage_dispatch_model(
         discharge=discharge,
         state_of_charge=state_of_charge,
         mode=mode,
-        revenue_expression=revenue,
-        throughput_expression=throughput,
+        revenue_expression=model.revenue_expression,
+        throughput_expression=model.throughput_expression,
+        optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_params=dict(solver_params or {}),
+        log_to_console=log_to_console,
     )
 
 
@@ -219,6 +245,7 @@ def solve_storage_dispatch(
     name: str = "storage_dispatch",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
 ) -> StorageDispatchResult:
     storage_model = build_storage_dispatch_model(
         predicted_prices=predicted_prices,
@@ -226,8 +253,9 @@ def solve_storage_dispatch(
         name=name,
         log_to_console=log_to_console,
         solver_params=solver_params,
+        optimization_solver=optimization_solver,
     )
-    _optimize_storage_model(storage_model.model)
+    _optimize_storage_model(storage_model)
     return _extract_storage_dispatch_result(storage_model)
 
 
@@ -239,6 +267,7 @@ def solve_storage_dispatch_lexicographic(
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
     objective_tolerance: float = 1e-6,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
 ) -> StorageDispatchResult:
     effective_solver_params = dict(solver_params or {})
     effective_solver_params.setdefault("FeasibilityTol", 1e-9)
@@ -248,22 +277,25 @@ def solve_storage_dispatch_lexicographic(
         name=name,
         log_to_console=log_to_console,
         solver_params=effective_solver_params,
+        optimization_solver=optimization_solver,
     )
-    _optimize_storage_model(storage_model.model)
+    _optimize_storage_model(storage_model)
 
-    primary_objective_value = float(storage_model.model.ObjVal)
-    primary_objective_floor = storage_model.model.addConstr(
-        storage_model.revenue_expression
-        - parameters.throughput_penalty * storage_model.throughput_expression
-        >= primary_objective_value - objective_tolerance,
-        name="lexicographic_primary_objective_floor",
+    primary_objective_value = float(pyo.value(storage_model.model.objective))
+    storage_model.model.primary_objective_floor = pyo.Constraint(
+        expr=(
+            storage_model.revenue_expression
+            - parameters.throughput_penalty * storage_model.throughput_expression
+            >= primary_objective_value - objective_tolerance
+        )
     )
-    storage_model.model.setObjective(storage_model.throughput_expression, GRB.MINIMIZE)
-    _optimize_storage_model(storage_model.model)
+    storage_model.model.objective.deactivate()
+    storage_model.model.lexicographic_objective = pyo.Objective(
+        expr=storage_model.throughput_expression,
+        sense=pyo.minimize,
+    )
+    _optimize_storage_model(storage_model)
 
-    # The primary-objective floor is enforced directly in the second-stage model.
-    # Trust the solved constrained model here rather than re-checking with a
-    # hand-computed floating-point comparison, which can produce false positives.
     return _extract_storage_dispatch_result(storage_model)
 
 
@@ -324,36 +356,106 @@ def _validate_inputs(
     return prices
 
 
-def _configure_storage_model(
-    model: gp.Model,
-    *,
-    log_to_console: bool,
-    solver_params: Mapping[str, float | int | str] | None,
-) -> None:
-    model.Params.OutputFlag = 1 if log_to_console else 0
-    if solver_params is None:
-        return
-    for param_name, value in solver_params.items():
-        model.setParam(param_name, value)
-
-
 def _build_storage_dispatch_core_model(
     *,
     horizon: int,
     parameters: StorageDispatchParameters,
     name: str,
+) -> tuple[pyo.ConcreteModel, pyo.Var, pyo.Var, pyo.Var, pyo.Var | None]:
+    model = pyo.ConcreteModel(name=name)
+    model.HOURS = pyo.RangeSet(1, horizon)
+    model.SOC_POINTS = pyo.RangeSet(1, horizon + 1)
+
+    model.charge = pyo.Var(
+        model.HOURS,
+        domain=pyo.NonNegativeReals,
+        bounds=(0.0, parameters.power_limit),
+    )
+    model.discharge = pyo.Var(
+        model.HOURS,
+        domain=pyo.NonNegativeReals,
+        bounds=(0.0, parameters.power_limit),
+    )
+    model.state_of_charge = pyo.Var(
+        model.SOC_POINTS,
+        domain=pyo.NonNegativeReals,
+        bounds=(0.0, parameters.energy_capacity),
+    )
+    mode = None
+    if not _should_use_relaxed_dispatch_formulation(parameters):
+        model.mode = pyo.Var(model.HOURS, domain=pyo.Binary)
+        mode = model.mode
+
+    model.initial_state_of_charge = pyo.Constraint(
+        expr=model.state_of_charge[1] == parameters.initial_state_of_charge
+    )
+
+    if parameters.terminal_state_of_charge is not None:
+        model.terminal_state_of_charge = pyo.Constraint(
+            expr=model.state_of_charge[horizon + 1] == parameters.terminal_state_of_charge
+        )
+
+    def state_transition_rule(dispatch_model: pyo.ConcreteModel, hour: int) -> pyo.Expression:
+        return (
+            dispatch_model.state_of_charge[hour + 1]
+            == dispatch_model.state_of_charge[hour]
+            + parameters.charge_efficiency * dispatch_model.charge[hour]
+            - dispatch_model.discharge[hour] / parameters.discharge_efficiency
+        )
+
+    model.state_transition = pyo.Constraint(model.HOURS, rule=state_transition_rule)
+
+    if mode is None:
+        model.shared_power_limit = pyo.Constraint(
+            model.HOURS,
+            rule=lambda dispatch_model, hour: (
+                dispatch_model.charge[hour] + dispatch_model.discharge[hour]
+                <= parameters.power_limit
+            ),
+        )
+    else:
+        model.charge_limit = pyo.Constraint(
+            model.HOURS,
+            rule=lambda dispatch_model, hour: (
+                dispatch_model.charge[hour]
+                <= parameters.power_limit * dispatch_model.mode[hour]
+            ),
+        )
+        model.discharge_limit = pyo.Constraint(
+            model.HOURS,
+            rule=lambda dispatch_model, hour: (
+                dispatch_model.discharge[hour]
+                <= parameters.power_limit * (1 - dispatch_model.mode[hour])
+            ),
+        )
+        model.binary_shared_power_limit = pyo.Constraint(
+            model.HOURS,
+            rule=lambda dispatch_model, hour: (
+                dispatch_model.charge[hour] + dispatch_model.discharge[hour]
+                <= parameters.power_limit
+            ),
+        )
+
+    return model, model.charge, model.discharge, model.state_of_charge, mode
+
+
+def _build_storage_dispatch_gurobi_core_model(
+    *,
+    gp: Any,
+    GRB: Any,
+    horizon: int,
+    parameters: StorageDispatchParameters,
+    name: str,
     log_to_console: bool,
     solver_params: Mapping[str, float | int | str] | None,
-) -> tuple[gp.Model, gp.tupledict, gp.tupledict, gp.tupledict, gp.tupledict | None]:
+) -> tuple[Any, Any, Any, Any, Any | None]:
     hours = range(1, horizon + 1)
     soc_points = range(1, horizon + 2)
 
     model = gp.Model(name)
-    _configure_storage_model(
-        model,
-        log_to_console=log_to_console,
-        solver_params=solver_params,
-    )
+    model.Params.OutputFlag = 1 if log_to_console else 0
+    for param_name, value in dict(solver_params or {}).items():
+        model.setParam(param_name, value)
 
     charge = model.addVars(hours, lb=0.0, ub=parameters.power_limit, name="charge")
     discharge = model.addVars(hours, lb=0.0, ub=parameters.power_limit, name="discharge")
@@ -371,13 +473,11 @@ def _build_storage_dispatch_core_model(
         state_of_charge[1] == parameters.initial_state_of_charge,
         name="initial_state_of_charge",
     )
-
     if parameters.terminal_state_of_charge is not None:
         model.addConstr(
             state_of_charge[horizon + 1] == parameters.terminal_state_of_charge,
             name="terminal_state_of_charge",
         )
-
     for hour in hours:
         model.addConstr(
             state_of_charge[hour + 1]
@@ -410,13 +510,36 @@ def _should_use_relaxed_dispatch_formulation(
     return parameters.throughput_penalty >= RELAXED_THROUGHPUT_PENALTY_THRESHOLD
 
 
-def _optimize_storage_model(model: gp.Model) -> None:
-    model.optimize()
-    if model.Status != GRB.OPTIMAL:
-        raise RuntimeError(
-            "Storage dispatch model did not solve to optimality. "
-            f"Gurobi status code: {model.Status}."
+def _optimize_storage_model(storage_model: StorageDispatchModel) -> None:
+    deactivated_constraints = _deactivate_highs_binary_dispatch_constraints(storage_model)
+    try:
+        solve_result = solve_pyomo_model(
+            storage_model.model,
+            solver_name=storage_model.optimization_solver,
+            solver_params=storage_model.solver_params,
+            log_to_console=storage_model.log_to_console,
         )
+        require_pyomo_optimal(
+            solve_result,
+            problem_label="Storage dispatch model",
+        )
+    finally:
+        for constraint in deactivated_constraints:
+            constraint.activate()
+
+
+def _deactivate_highs_binary_dispatch_constraints(
+    storage_model: StorageDispatchModel,
+) -> tuple[pyo.Constraint, ...]:
+    if storage_model.optimization_solver != "highs" or storage_model.mode is None:
+        return ()
+    constraints: list[pyo.Constraint] = []
+    for component_name in ("charge_limit", "discharge_limit"):
+        component = getattr(storage_model.model, component_name, None)
+        if component is not None and component.active:
+            component.deactivate()
+            constraints.append(component)
+    return tuple(constraints)
 
 
 def _extract_storage_dispatch_result(
@@ -425,17 +548,25 @@ def _extract_storage_dispatch_result(
     hours = range(1, len(storage_model.prices) + 1)
     soc_points = range(1, len(storage_model.prices) + 2)
 
-    charge = tuple(storage_model.charge[hour].X for hour in hours)
-    discharge = tuple(storage_model.discharge[hour].X for hour in hours)
-    state_of_charge = tuple(storage_model.state_of_charge[hour].X for hour in soc_points)
+    charge = tuple(float(pyo.value(storage_model.charge[hour])) for hour in hours)
+    discharge = tuple(float(pyo.value(storage_model.discharge[hour])) for hour in hours)
+    state_of_charge = tuple(
+        float(pyo.value(storage_model.state_of_charge[hour])) for hour in soc_points
+    )
     if storage_model.mode is None:
         mode = _infer_dispatch_mode_from_flows(charge, discharge)
     else:
-        mode = tuple(int(round(storage_model.mode[hour].X)) for hour in hours)
-    revenue_value = float(storage_model.revenue_expression.getValue())
+        mode_values = tuple(
+            pyo.value(storage_model.mode[hour], exception=False) for hour in hours
+        )
+        if any(value is None for value in mode_values):
+            mode = _infer_dispatch_mode_from_flows(charge, discharge)
+        else:
+            mode = tuple(int(round(float(value))) for value in mode_values)
+    revenue_value = float(pyo.value(storage_model.revenue_expression))
     throughput_penalty_value = float(
         storage_model.parameters.throughput_penalty
-        * storage_model.throughput_expression.getValue()
+        * pyo.value(storage_model.throughput_expression)
     )
 
     return StorageDispatchResult(
@@ -455,12 +586,7 @@ def _infer_dispatch_mode_from_flows(
     *,
     atol: float = 1e-9,
 ) -> tuple[int, ...]:
-    """Return a deterministic binary mode for downstream reporting.
-
-    The relaxed formulation does not include a discrete mode variable, but the
-    rest of the pipeline expects one. Treat charging-dominant or tied hours as
-    charge mode and discharge-dominant hours as discharge mode.
-    """
+    """Return a deterministic binary mode for downstream reporting."""
 
     inferred_mode: list[int] = []
     for charge_value, discharge_value in zip(charge, discharge, strict=True):
@@ -469,3 +595,15 @@ def _infer_dispatch_mode_from_flows(
             continue
         inferred_mode.append(1 if charge_value > discharge_value else 0)
     return tuple(inferred_mode)
+
+
+def _require_gurobi_for_spo() -> tuple[Any, Any]:
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except ImportError as exc:
+        raise ImportError(
+            "Gurobi is required only for SPO+ training paths. Install it with "
+            "`uv sync --extra gurobi` and ensure a valid Gurobi license is configured."
+        ) from exc
+    return gp, GRB

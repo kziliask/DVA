@@ -46,17 +46,6 @@ from dva.analysis.run_ems_exact_shap import (
     build_parser as build_ems_exact_shap_parser,
 )
 
-
-def _require_gurobi() -> None:
-    gp = pytest.importorskip("gurobipy")
-    try:
-        model = gp.Model()
-        model.Params.OutputFlag = 0
-        model.dispose()
-    except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"Gurobi unavailable: {exc}")
-
-
 def _additive_coalition_game(feature_values: tuple[float, ...]) -> np.ndarray:
     coalition_values = np.zeros(1 << len(feature_values), dtype=float)
     for coalition_mask in range(len(coalition_values)):
@@ -261,8 +250,6 @@ def test_build_coverage_matrix_thresholds_toy_distances() -> None:
 
 
 def test_solve_maximum_coverage_selects_best_facility_on_toy_instance() -> None:
-    _require_gurobi()
-
     coverage_matrix = np.array(
         [
             [True, False, False],
@@ -288,8 +275,6 @@ def test_solve_maximum_coverage_selects_best_facility_on_toy_instance() -> None:
 
 
 def test_solve_maximum_coverage_uses_stable_tie_break() -> None:
-    _require_gurobi()
-
     coverage_matrix = np.array([[True, True]], dtype=bool)
 
     result = solve_maximum_coverage(
@@ -355,8 +340,6 @@ def test_cvar_residual_scenario_helpers_preserve_shapes_and_seed() -> None:
 
 
 def test_solve_cvar_coverage_uses_tail_percentage_reward() -> None:
-    _require_gurobi()
-
     coverage_matrix = np.eye(2, dtype=bool)
     demand_scenarios = np.array(
         [
@@ -440,8 +423,6 @@ def test_solve_greedy_max_cover_coverage_picks_largest_marginal_cover() -> None:
 
 
 def test_solve_gurobi_lp_relaxation_coverage_rounds_relaxed_solution() -> None:
-    _require_gurobi()
-
     coverage_matrix = np.eye(3, dtype=bool)
 
     result = solve_gurobi_lp_relaxation_coverage(
@@ -460,8 +441,8 @@ def test_solve_gurobi_lp_relaxation_coverage_rounds_relaxed_solution() -> None:
         objective_tolerance=0.0,
     )
 
-    assert result.solver_name == "gurobi_lp_relaxation"
-    assert alias_result.solver_name == "gurobi_lp_relaxation"
+    assert result.solver_name == "lp_relaxation"
+    assert alias_result.solver_name == "lp_relaxation"
     assert not result.optimal
     assert result.selected_facility_zip_codes == ("10002", "10003")
     assert result.covered_zip_codes == ("10002", "10003")
@@ -470,8 +451,6 @@ def test_solve_gurobi_lp_relaxation_coverage_rounds_relaxed_solution() -> None:
 
 
 def test_decision_shap_matches_decision_value_game_on_toy_boundary() -> None:
-    _require_gurobi()
-
     coalition_demand_matrix = np.array(
         [
             [2.0, 1.0],
@@ -636,8 +615,6 @@ def test_decision_shap_approximations_can_vary_by_seed() -> None:
 
 
 def test_zero_residual_cvar_decision_shap_matches_deterministic_path() -> None:
-    _require_gurobi()
-
     coalition_demand_matrix = np.array(
         [
             [2.0, 1.0],
@@ -794,7 +771,6 @@ def test_ems_time_split_samples_explanations_from_final_month() -> None:
 
 
 def test_run_ems_exact_shap_smoke_writes_expected_outputs(tmp_path: Path) -> None:
-    _require_gurobi()
     paths = _write_toy_ems_case(tmp_path)
     config = EmsExactShapConfig(
         x_path=paths["x"],

@@ -6,10 +6,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import gurobipy as gp
 import pandas as pd
-from gurobipy import GRB
+import pyomo.environ as pyo
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+
+from dva.optimization import (
+    DEFAULT_OPTIMIZATION_SOLVER,
+    normalize_optimization_solver,
+    pyomo_mip_gap,
+    pyomo_solver_status,
+    require_pyomo_solution,
+    solve_pyomo_model,
+)
 
 
 DEFAULT_START_ZONE_ID = 161
@@ -29,7 +37,7 @@ type OrienteeringSolveMethod = Literal["exact", "heuristic", "ortools"]
 
 @dataclass(slots=True)
 class OrienteeringModel:
-    model: gp.Model
+    model: pyo.ConcreteModel
     zone_scores: dict[int, float]
     distance_matrix: pd.DataFrame
     start_zone_id: int
@@ -39,8 +47,14 @@ class OrienteeringModel:
     arc_distances: dict[tuple[NodeKey, NodeKey], float]
     outgoing_arcs: dict[NodeKey, tuple[NodeKey, ...]]
     incoming_arcs: dict[NodeKey, tuple[NodeKey, ...]]
-    x: gp.tupledict
-    y: gp.tupledict
+    x: pyo.Var
+    y: pyo.Var
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER
+    solver_params: dict[str, float | int | str] | None = None
+    log_to_console: bool = False
+    solve_status: str | None = None
+    optimal: bool = False
+    mip_gap: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +70,7 @@ class OrienteeringResult:
     visited_zone_ids: tuple[int, ...]
     route_arcs: tuple[tuple[int, int], ...]
     visited_scores: tuple[tuple[int, float], ...]
-    solver_status: int | None
+    solver_status: int | str | None
     optimal: bool
     mip_gap: float | None
 
@@ -103,6 +117,7 @@ def build_orienteering_model(
     name: str = "orienteering",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
 ) -> OrienteeringModel:
     normalized_scores = _normalize_zone_scores(zone_scores)
     if max_distance_budget < 0:
@@ -129,43 +144,14 @@ def build_orienteering_model(
     )
     outgoing_arcs, incoming_arcs = _build_adjacency_maps(arc_distances)
 
-    model = gp.Model(name)
-    _configure_orienteering_model(
-        model,
-        log_to_console=log_to_console,
-        solver_params=solver_params,
-    )
-    model.Params.LazyConstraints = 1
-
-    x = model.addVars(list(arc_distances), vtype=GRB.BINARY, name="x")
-    y = model.addVars(customer_zone_ids, vtype=GRB.BINARY, name="y")
-
-    model.setObjective(
-        gp.quicksum(normalized_scores.get(zone_id, 0.0) * y[zone_id] for zone_id in customer_zone_ids),
-        GRB.MAXIMIZE,
-    )
-    model.addConstr(
-        gp.quicksum(x[_SOURCE_NODE, successor] for successor in outgoing_arcs[_SOURCE_NODE]) == 1,
-        name="source_departure",
-    )
-    model.addConstr(
-        gp.quicksum(x[predecessor, _SINK_NODE] for predecessor in incoming_arcs[_SINK_NODE]) == 1,
-        name="sink_arrival",
-    )
-
-    for zone_id in customer_zone_ids:
-        model.addConstr(
-            gp.quicksum(x[predecessor, zone_id] for predecessor in incoming_arcs[zone_id]) == y[zone_id],
-            name=f"in_degree[{zone_id}]",
-        )
-        model.addConstr(
-            gp.quicksum(x[zone_id, successor] for successor in outgoing_arcs[zone_id]) == y[zone_id],
-            name=f"out_degree[{zone_id}]",
-        )
-
-    model.addConstr(
-        gp.quicksum(distance * x[arc] for arc, distance in arc_distances.items()) <= max_distance_budget,
-        name="distance_budget",
+    model = _build_orienteering_pyomo_model(
+        name=name,
+        normalized_scores=normalized_scores,
+        max_distance_budget=max_distance_budget,
+        customer_zone_ids=customer_zone_ids,
+        arc_distances=arc_distances,
+        outgoing_arcs=outgoing_arcs,
+        incoming_arcs=incoming_arcs,
     )
 
     orienteering_model = OrienteeringModel(
@@ -179,10 +165,12 @@ def build_orienteering_model(
         arc_distances=arc_distances,
         outgoing_arcs=outgoing_arcs,
         incoming_arcs=incoming_arcs,
-        x=x,
-        y=y,
+        x=model.x,
+        y=model.y,
+        optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_params=dict(solver_params or {}),
+        log_to_console=log_to_console,
     )
-    _attach_callback_state(orienteering_model)
     return orienteering_model
 
 
@@ -197,6 +185,7 @@ def solve_orienteering(
     name: str = "orienteering",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
 ) -> OrienteeringResult:
     if method == "heuristic":
         return solve_orienteering_heuristic(
@@ -229,12 +218,10 @@ def solve_orienteering(
         name=name,
         log_to_console=log_to_console,
         solver_params=solver_params,
+        optimization_solver=optimization_solver,
     )
-    try:
-        _optimize_orienteering_model(orienteering_model.model)
-        return _extract_orienteering_result(orienteering_model, method="exact")
-    finally:
-        orienteering_model.model.dispose()
+    _optimize_orienteering_model(orienteering_model)
+    return _extract_orienteering_result(orienteering_model, method="exact")
 
 
 def solve_orienteering_heuristic(
@@ -646,109 +633,111 @@ def _build_adjacency_maps(
     return outgoing_tuples, incoming_tuples
 
 
-def _configure_orienteering_model(
-    model: gp.Model,
+def _build_orienteering_pyomo_model(
     *,
-    log_to_console: bool,
-    solver_params: Mapping[str, float | int | str] | None,
+    name: str,
+    normalized_scores: Mapping[int, float],
+    max_distance_budget: float,
+    customer_zone_ids: tuple[int, ...],
+    arc_distances: Mapping[tuple[NodeKey, NodeKey], float],
+    outgoing_arcs: Mapping[NodeKey, tuple[NodeKey, ...]],
+    incoming_arcs: Mapping[NodeKey, tuple[NodeKey, ...]],
+) -> pyo.ConcreteModel:
+    model = pyo.ConcreteModel(name=name)
+    model.ARCS = pyo.Set(dimen=2, initialize=list(arc_distances))
+    model.CUSTOMERS = pyo.Set(initialize=customer_zone_ids)
+    model.CUSTOMER_ARCS = pyo.Set(
+        dimen=2,
+        initialize=[
+            (origin, destination)
+            for origin, destination in arc_distances
+            if isinstance(origin, int) and isinstance(destination, int)
+        ],
+    )
+
+    model.x = pyo.Var(model.ARCS, domain=pyo.Binary)
+    model.y = pyo.Var(model.CUSTOMERS, domain=pyo.Binary)
+    if len(customer_zone_ids) > 0:
+        model.order = pyo.Var(
+            model.CUSTOMERS,
+            domain=pyo.NonNegativeReals,
+            bounds=(0.0, float(len(customer_zone_ids))),
+        )
+
+    model.objective = pyo.Objective(
+        expr=sum(
+            normalized_scores.get(zone_id, 0.0) * model.y[zone_id]
+            for zone_id in customer_zone_ids
+        ),
+        sense=pyo.maximize,
+    )
+    model.source_departure = pyo.Constraint(
+        expr=sum(model.x[_SOURCE_NODE, successor] for successor in outgoing_arcs[_SOURCE_NODE]) == 1
+    )
+    model.sink_arrival = pyo.Constraint(
+        expr=sum(model.x[predecessor, _SINK_NODE] for predecessor in incoming_arcs[_SINK_NODE]) == 1
+    )
+
+    model.in_degree = pyo.Constraint(
+        model.CUSTOMERS,
+        rule=lambda route_model, zone_id: (
+            sum(route_model.x[predecessor, zone_id] for predecessor in incoming_arcs[zone_id])
+            == route_model.y[zone_id]
+        ),
+    )
+    model.out_degree = pyo.Constraint(
+        model.CUSTOMERS,
+        rule=lambda route_model, zone_id: (
+            sum(route_model.x[zone_id, successor] for successor in outgoing_arcs[zone_id])
+            == route_model.y[zone_id]
+        ),
+    )
+    model.distance_budget = pyo.Constraint(
+        expr=sum(distance * model.x[arc] for arc, distance in arc_distances.items())
+        <= max_distance_budget
+    )
+
+    if len(customer_zone_ids) > 0:
+        customer_count = len(customer_zone_ids)
+        model.order_selected_lower = pyo.Constraint(
+            model.CUSTOMERS,
+            rule=lambda route_model, zone_id: route_model.order[zone_id]
+            >= route_model.y[zone_id],
+        )
+        model.order_selected_upper = pyo.Constraint(
+            model.CUSTOMERS,
+            rule=lambda route_model, zone_id: route_model.order[zone_id]
+            <= customer_count * route_model.y[zone_id],
+        )
+        model.subtour_elimination = pyo.Constraint(
+            model.CUSTOMER_ARCS,
+            rule=lambda route_model, origin, destination: (
+                route_model.order[origin]
+                - route_model.order[destination]
+                + customer_count * route_model.x[origin, destination]
+                <= customer_count - 1
+            ),
+        )
+
+    return model
+
+
+def _optimize_orienteering_model(
+    orienteering_model: OrienteeringModel,
 ) -> None:
-    model.Params.OutputFlag = 1 if log_to_console else 0
-    if solver_params is None:
-        return
-    for param_name, value in solver_params.items():
-        model.setParam(param_name, value)
-
-
-def _attach_callback_state(orienteering_model: OrienteeringModel) -> None:
-    model = orienteering_model.model
-    model._orienteering_x = orienteering_model.x
-    model._orienteering_y = orienteering_model.y
-    model._orienteering_customer_zone_ids = orienteering_model.customer_zone_ids
-
-
-def _optimize_orienteering_model(model: gp.Model) -> None:
-    model.optimize(_subtour_elimination_callback)
-    if model.SolCount == 0:
-        raise RuntimeError(
-            "Orienteering model did not produce a feasible solution. "
-            f"Gurobi status code: {model.Status}.",
-        )
-    if model.Status not in {GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL, GRB.INTERRUPTED}:
-        raise RuntimeError(
-            "Orienteering model terminated without a usable incumbent. "
-            f"Gurobi status code: {model.Status}.",
-        )
-
-
-def _subtour_elimination_callback(model: gp.Model, where: int) -> None:
-    if where != GRB.Callback.MIPSOL:
-        return
-
-    x_values = model.cbGetSolution(model._orienteering_x)
-    y_values = model.cbGetSolution(model._orienteering_y)
-    active_successor = {
-        origin_node: destination_node
-        for (origin_node, destination_node), value in x_values.items()
-        if value > 0.5
-    }
-    path_customer_nodes = _collect_customer_nodes_on_main_path(active_successor)
-    remaining_customer_nodes = {
-        zone_id
-        for zone_id in model._orienteering_customer_zone_ids
-        if y_values[zone_id] > 0.5 and zone_id not in path_customer_nodes
-    }
-
-    while remaining_customer_nodes:
-        seed_zone_id = next(iter(remaining_customer_nodes))
-        subtour_nodes = _collect_disconnected_cycle(seed_zone_id, active_successor)
-        if len(subtour_nodes) >= 2:
-            model.cbLazy(
-                gp.quicksum(
-                    model._orienteering_x[origin_zone_id, destination_zone_id]
-                    for origin_zone_id in subtour_nodes
-                    for destination_zone_id in subtour_nodes
-                    if origin_zone_id != destination_zone_id
-                    and (origin_zone_id, destination_zone_id) in model._orienteering_x
-                )
-                <= len(subtour_nodes) - 1
-            )
-        remaining_customer_nodes.difference_update(subtour_nodes)
-
-
-def _collect_customer_nodes_on_main_path(
-    active_successor: Mapping[NodeKey, NodeKey],
-) -> set[int]:
-    main_path_customers: set[int] = set()
-    current_node: NodeKey = _SOURCE_NODE
-    seen_nodes: set[NodeKey] = set()
-
-    while current_node in active_successor and current_node not in seen_nodes:
-        seen_nodes.add(current_node)
-        current_node = active_successor[current_node]
-        if current_node == _SINK_NODE:
-            break
-        if isinstance(current_node, int):
-            main_path_customers.add(current_node)
-    return main_path_customers
-
-
-def _collect_disconnected_cycle(
-    seed_zone_id: int,
-    active_successor: Mapping[NodeKey, NodeKey],
-) -> tuple[int, ...]:
-    walk: list[int] = []
-    position_by_zone_id: dict[int, int] = {}
-    current_node: NodeKey = seed_zone_id
-
-    while isinstance(current_node, int) and current_node not in position_by_zone_id:
-        position_by_zone_id[current_node] = len(walk)
-        walk.append(current_node)
-        current_node = active_successor[current_node]
-
-    if not isinstance(current_node, int):
-        return tuple(walk)
-    return tuple(walk[position_by_zone_id[current_node] :])
-
+    solve_result = solve_pyomo_model(
+        orienteering_model.model,
+        solver_name=orienteering_model.optimization_solver,
+        solver_params=orienteering_model.solver_params,
+        log_to_console=orienteering_model.log_to_console,
+    )
+    require_pyomo_solution(
+        solve_result,
+        problem_label="Orienteering model",
+    )
+    orienteering_model.solve_status = pyomo_solver_status(solve_result)
+    orienteering_model.optimal = solve_result.optimal
+    orienteering_model.mip_gap = None if solve_result.optimal else pyomo_mip_gap(solve_result)
 
 def _extract_orienteering_result(
     orienteering_model: OrienteeringModel,
@@ -758,19 +747,13 @@ def _extract_orienteering_result(
     active_successor = {
         origin_node: destination_node
         for (origin_node, destination_node), variable in orienteering_model.x.items()
-        if variable.X > 0.5
+        if float(pyo.value(variable)) > 0.5
     }
     route_zone_ids, route_arcs = _extract_route(
         active_successor=active_successor,
         start_zone_id=orienteering_model.start_zone_id,
         end_zone_id=orienteering_model.end_zone_id,
     )
-    mip_gap = None
-    if hasattr(orienteering_model.model, "MIPGap"):
-        try:
-            mip_gap = float(orienteering_model.model.MIPGap)
-        except gp.GurobiError:
-            mip_gap = None
 
     return _build_orienteering_result(
         method=method,
@@ -780,9 +763,9 @@ def _extract_orienteering_result(
         end_zone_id=orienteering_model.end_zone_id,
         max_distance_budget=orienteering_model.max_distance_budget,
         route_zone_ids=route_zone_ids,
-        solver_status=int(orienteering_model.model.Status),
-        optimal=orienteering_model.model.Status == GRB.OPTIMAL,
-        mip_gap=mip_gap,
+        solver_status=orienteering_model.solve_status,
+        optimal=orienteering_model.optimal,
+        mip_gap=orienteering_model.mip_gap,
     )
 
 
@@ -795,7 +778,7 @@ def _build_orienteering_result(
     end_zone_id: int,
     max_distance_budget: float,
     route_zone_ids: tuple[int, ...],
-    solver_status: int | None,
+    solver_status: int | str | None,
     optimal: bool,
     mip_gap: float | None,
 ) -> OrienteeringResult:

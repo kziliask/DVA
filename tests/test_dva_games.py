@@ -63,7 +63,7 @@ def test_dva_game_characteristic_values_use_empty_coalition_baseline() -> None:
 
 
 def test_cross_dvi_labeling() -> None:
-    design_players = build_design_players({"solver": "greedy"}, {"solver": "gurobi"})
+    design_players = build_design_players({"solver": "greedy"}, {"solver": "exact"})
     players = build_joint_players(("hour", "temp_c"), design_players)
 
     assert classify_interaction(players, frozenset({0, 1})) == "Info-Info"
@@ -109,7 +109,7 @@ def test_caiso_design_player_baselines() -> None:
 def test_ems_design_player_baselines() -> None:
     assert EMS_INFO_RADII_KM == (1.0, 2.0, 3.0)
     assert EMS_INFO_STAGING_AREAS == (3, 5, 8)
-    assert EMS_DESIGN_BASELINE.solver == "gurobi"
+    assert EMS_DESIGN_BASELINE.solver == "exact"
     assert EMS_DESIGN_BASELINE.radius_km == pytest.approx(3.0)
     assert EMS_DESIGN_BASELINE.staging_areas == 8
     assert EMS_DESIGN_ACTUALS["naive"].solver == "naive_greedy"

@@ -9,10 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-import gurobipy as gp
 import numpy as np
 import pandas as pd
-from gurobipy import GRB
+import pyomo.environ as pyo
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from xgboost import XGBRegressor
 
@@ -25,6 +24,14 @@ from dva.analysis.evaluation_metrics import (
     compute_exact_decision_infidelity,
     compute_rank_kendall_tau_from_rankings,
     compute_rank_spearman_from_rankings,
+)
+from dva.optimization import (
+    DEFAULT_OPTIMIZATION_SOLVER,
+    normalize_optimization_solver,
+    pyomo_mip_gap,
+    pyomo_solver_status,
+    require_pyomo_solution,
+    solve_pyomo_model,
 )
 
 
@@ -53,31 +60,35 @@ DEFAULT_OBJECTIVE_TOLERANCE = 1e-6
 DEFAULT_CVAR_ALPHA = 0.9
 DEFAULT_CVAR_SCENARIO_COUNT = 100
 DEFAULT_EXCLUDED_ZIP_CODES = ("10468",)
-EMS_COVERAGE_SOLVER_GUROBI = "gurobi"
+EMS_COVERAGE_SOLVER_EXACT = "exact"
 EMS_COVERAGE_SOLVER_NAIVE_GREEDY = "naive_greedy"
 EMS_COVERAGE_SOLVER_GREEDY_MAX_COVER = "greedy_max_cover"
-EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION = "gurobi_lp_relaxation"
+EMS_COVERAGE_SOLVER_LP_RELAXATION = "lp_relaxation"
+EMS_COVERAGE_SOLVER_GUROBI = EMS_COVERAGE_SOLVER_EXACT
+EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION = EMS_COVERAGE_SOLVER_LP_RELAXATION
 SUPPORTED_EMS_COVERAGE_SOLVERS = (
-    EMS_COVERAGE_SOLVER_GUROBI,
+    EMS_COVERAGE_SOLVER_EXACT,
     EMS_COVERAGE_SOLVER_NAIVE_GREEDY,
     EMS_COVERAGE_SOLVER_GREEDY_MAX_COVER,
-    EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
+    EMS_COVERAGE_SOLVER_LP_RELAXATION,
 )
-DEFAULT_COVERAGE_SOLVER = EMS_COVERAGE_SOLVER_GUROBI
+DEFAULT_COVERAGE_SOLVER = EMS_COVERAGE_SOLVER_EXACT
 _EMS_COVERAGE_SOLVER_ALIASES = {
-    "gurobi": EMS_COVERAGE_SOLVER_GUROBI,
+    "exact": EMS_COVERAGE_SOLVER_EXACT,
+    "pyomo": EMS_COVERAGE_SOLVER_EXACT,
+    "gurobi": EMS_COVERAGE_SOLVER_EXACT,
     "naive_greedy": EMS_COVERAGE_SOLVER_NAIVE_GREEDY,
     "naive-greedy": EMS_COVERAGE_SOLVER_NAIVE_GREEDY,
     "greedy_max_cover": EMS_COVERAGE_SOLVER_GREEDY_MAX_COVER,
     "greedy-max-cover": EMS_COVERAGE_SOLVER_GREEDY_MAX_COVER,
-    "gurobi_lp_relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "gurobi-lp-relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "linear_relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "linear-relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "lp": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "lp_relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "lp-relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
-    "relaxation": EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
+    "gurobi_lp_relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "gurobi-lp-relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "linear_relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "linear-relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "lp": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "lp_relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "lp-relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
+    "relaxation": EMS_COVERAGE_SOLVER_LP_RELAXATION,
 }
 EMS_TIMESTAMP_COLUMN = "timestamp_hour"
 MONTH_FEATURE_COLUMN = "month"
@@ -104,10 +115,11 @@ class MaximumCoverageResult:
     covered_zip_codes: tuple[str, ...]
     selected_facility_indices: tuple[int, ...]
     covered_zone_indices: tuple[int, ...]
-    solver_status: int
+    solver_status: int | str
     optimal: bool
     mip_gap: float | None
     solver_name: str = DEFAULT_COVERAGE_SOLVER
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER
     risk_objective_value: float | None = None
 
 
@@ -142,6 +154,7 @@ class EmsExactShapConfig:
     mip_gap: float = 0.0
     mip_gap_abs: float = 1e-9
     gurobi_threads: int = 1
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER
     objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE
     coverage_solver: str = DEFAULT_COVERAGE_SOLVER
     excluded_zip_codes: tuple[str, ...] = DEFAULT_EXCLUDED_ZIP_CODES
@@ -486,10 +499,11 @@ def solve_ems_coverage(
     name: str = "ems_coverage",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
     objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE,
 ) -> MaximumCoverageResult:
     solver = normalize_ems_coverage_solver(solver_name)
-    if solver == EMS_COVERAGE_SOLVER_GUROBI:
+    if solver == EMS_COVERAGE_SOLVER_EXACT:
         return solve_maximum_coverage(
             demand,
             coverage_matrix,
@@ -498,6 +512,7 @@ def solve_ems_coverage(
             name=name,
             log_to_console=log_to_console,
             solver_params=solver_params,
+            optimization_solver=optimization_solver,
             objective_tolerance=objective_tolerance,
         )
     if solver == EMS_COVERAGE_SOLVER_NAIVE_GREEDY:
@@ -514,7 +529,7 @@ def solve_ems_coverage(
             zip_codes,
             facility_budget=facility_budget,
         )
-    if solver == EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION:
+    if solver == EMS_COVERAGE_SOLVER_LP_RELAXATION:
         return solve_gurobi_lp_relaxation_coverage(
             demand,
             coverage_matrix,
@@ -523,6 +538,7 @@ def solve_ems_coverage(
             name=name,
             log_to_console=log_to_console,
             solver_params=solver_params,
+            optimization_solver=optimization_solver,
             objective_tolerance=objective_tolerance,
         )
     raise AssertionError(f"Unhandled EMS coverage solver: {solver}")
@@ -621,6 +637,32 @@ def solve_gurobi_lp_relaxation_coverage(
     name: str = "ems_lp_relaxation_coverage",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
+    objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE,
+) -> MaximumCoverageResult:
+    return solve_lp_relaxation_coverage(
+        demand,
+        coverage_matrix,
+        zip_codes,
+        facility_budget=facility_budget,
+        name=name,
+        log_to_console=log_to_console,
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        objective_tolerance=objective_tolerance,
+    )
+
+
+def solve_lp_relaxation_coverage(
+    demand: Sequence[float] | np.ndarray,
+    coverage_matrix: np.ndarray,
+    zip_codes: Sequence[str],
+    *,
+    facility_budget: int,
+    name: str = "ems_lp_relaxation_coverage",
+    log_to_console: bool = False,
+    solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
     objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE,
 ) -> MaximumCoverageResult:
     demand_array, coverage_array, ordered_zip_codes = _prepare_coverage_inputs(
@@ -632,99 +674,62 @@ def solve_gurobi_lp_relaxation_coverage(
     if objective_tolerance < 0:
         raise ValueError("objective_tolerance must be non-negative.")
 
-    model = gp.Model(name)
-    model.Params.OutputFlag = 1 if log_to_console else 0
-    effective_solver_params = dict(solver_params or {})
-    effective_solver_params.setdefault("FeasibilityTol", 1e-9)
-    for param_name, value in effective_solver_params.items():
-        setattr(model.Params, param_name, value)
-
     demand_count, facility_count = coverage_array.shape
-    x = model.addVars(
-        facility_count,
-        lb=0.0,
-        ub=1.0,
-        vtype=GRB.CONTINUOUS,
-        name="x",
+    model = _build_maximum_coverage_pyomo_model(
+        name=name,
+        demand_array=demand_array,
+        coverage_array=coverage_array,
+        facility_budget=facility_budget,
+        relax_integrality=True,
     )
-    y = model.addVars(
-        demand_count,
-        lb=0.0,
-        ub=1.0,
-        vtype=GRB.CONTINUOUS,
-        name="y",
+    x = model.x
+    y = model.y
+    primary_objective = model.primary_objective_expression
+    solve_result = _solve_coverage_model(
+        model,
+        label="LP-relaxed coverage model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
     )
-    demand_total = _total_demand(demand_array)
-    primary_objective = gp.quicksum(
-        _coverage_weight(float(demand_array[i]), demand_total) * y[i]
-        for i in range(demand_count)
-    )
-    model.setObjective(primary_objective, GRB.MAXIMIZE)
-    for demand_idx in range(demand_count):
-        covering_facilities = [
-            facility_idx
-            for facility_idx in range(facility_count)
-            if coverage_array[demand_idx, facility_idx]
-        ]
-        model.addConstr(
-            y[demand_idx]
-            <= gp.quicksum(x[facility_idx] for facility_idx in covering_facilities),
-            name=f"coverage[{demand_idx}]",
-        )
-    model.addConstr(
-        gp.quicksum(x[facility_idx] for facility_idx in range(facility_count))
-        <= int(facility_budget),
-        name="facility_budget",
-    )
+    primary_objective_value = float(pyo.value(primary_objective))
 
-    model.optimize()
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            f"LP-relaxed coverage model did not produce a feasible solution; "
-            f"status={status}."
-        )
-    primary_objective_value = float(model.ObjVal)
-
-    model.addConstr(
-        primary_objective >= primary_objective_value - objective_tolerance,
-        name="deterministic_primary_objective_floor",
+    model.deterministic_primary_objective_floor = pyo.Constraint(
+        expr=primary_objective >= primary_objective_value - objective_tolerance
     )
-    model.setObjective(
-        _build_deterministic_coverage_tie_break_expression(
+    model.objective.deactivate()
+    model.tie_break_objective = pyo.Objective(
+        expr=_build_deterministic_coverage_tie_break_expression(
             x=x,
             y=y,
             demand_count=demand_count,
             facility_count=facility_count,
         ),
-        GRB.MAXIMIZE,
+        sense=pyo.maximize,
     )
-    model.optimize()
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            "LP-relaxed coverage tie-break model did not produce a feasible solution; "
-            f"status={status}."
-        )
+    solve_result = _solve_coverage_model(
+        model,
+        label="LP-relaxed coverage tie-break model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
+    )
 
     selected_indices = _round_lp_relaxation_facility_indices(
-        np.array([float(x[facility_idx].X) for facility_idx in range(facility_count)]),
+        np.array([float(pyo.value(x[facility_idx])) for facility_idx in range(facility_count)]),
         facility_budget=facility_budget,
     )
-    result = _build_coverage_result(
+    return _build_coverage_result(
         demand_array=demand_array,
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=status,
+        solver_status=pyomo_solver_status(solve_result),
         optimal=False,
         mip_gap=None,
-        solver_name=EMS_COVERAGE_SOLVER_GUROBI_LP_RELAXATION,
+        solver_name=EMS_COVERAGE_SOLVER_LP_RELAXATION,
+        optimization_solver=normalize_optimization_solver(optimization_solver),
     )
-    model.dispose()
-    return result
 
 
 def solve_maximum_coverage(
@@ -736,6 +741,7 @@ def solve_maximum_coverage(
     name: str = "ems_maximum_coverage",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
     objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE,
 ) -> MaximumCoverageResult:
     demand_array, coverage_array, ordered_zip_codes = _prepare_coverage_inputs(
@@ -747,92 +753,63 @@ def solve_maximum_coverage(
     if objective_tolerance < 0:
         raise ValueError("objective_tolerance must be non-negative.")
 
-    model = gp.Model(name)
-    model.Params.OutputFlag = 1 if log_to_console else 0
-    effective_solver_params = dict(solver_params or {})
-    effective_solver_params.setdefault("FeasibilityTol", 1e-9)
-    for param_name, value in effective_solver_params.items():
-        setattr(model.Params, param_name, value)
-
     demand_count, facility_count = coverage_array.shape
-    x = model.addVars(facility_count, vtype=GRB.BINARY, name="x")
-    y = model.addVars(demand_count, vtype=GRB.BINARY, name="y")
-    demand_total = _total_demand(demand_array)
-    primary_objective = gp.quicksum(
-        _coverage_weight(float(demand_array[i]), demand_total) * y[i]
-        for i in range(demand_count)
+    model = _build_maximum_coverage_pyomo_model(
+        name=name,
+        demand_array=demand_array,
+        coverage_array=coverage_array,
+        facility_budget=facility_budget,
+        relax_integrality=False,
     )
-    model.setObjective(primary_objective, GRB.MAXIMIZE)
-    for demand_idx in range(demand_count):
-        covering_facilities = [
-            facility_idx
-            for facility_idx in range(facility_count)
-            if coverage_array[demand_idx, facility_idx]
-        ]
-        model.addConstr(
-            y[demand_idx]
-            <= gp.quicksum(x[facility_idx] for facility_idx in covering_facilities),
-            name=f"coverage[{demand_idx}]",
-        )
-    model.addConstr(
-        gp.quicksum(x[facility_idx] for facility_idx in range(facility_count))
-        <= int(facility_budget),
-        name="facility_budget",
+    x = model.x
+    y = model.y
+    primary_objective = model.primary_objective_expression
+    solve_result = _solve_coverage_model(
+        model,
+        label="Maximum coverage model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
     )
+    primary_objective_value = float(pyo.value(primary_objective))
 
-    model.optimize()
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            f"Maximum coverage model did not produce a feasible solution; status={status}."
-        )
-    primary_objective_value = float(model.ObjVal)
-
-    model.addConstr(
-        primary_objective >= primary_objective_value - objective_tolerance,
-        name="deterministic_primary_objective_floor",
+    model.deterministic_primary_objective_floor = pyo.Constraint(
+        expr=primary_objective >= primary_objective_value - objective_tolerance
     )
-    model.setObjective(
-        _build_deterministic_coverage_tie_break_expression(
+    model.objective.deactivate()
+    model.tie_break_objective = pyo.Objective(
+        expr=_build_deterministic_coverage_tie_break_expression(
             x=x,
             y=y,
             demand_count=demand_count,
             facility_count=facility_count,
         ),
-        GRB.MAXIMIZE,
+        sense=pyo.maximize,
     )
-    model.optimize()
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            "Maximum coverage tie-break model did not produce a feasible solution; "
-            f"status={status}."
-        )
+    solve_result = _solve_coverage_model(
+        model,
+        label="Maximum coverage tie-break model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
+    )
 
     selected_indices = tuple(
         facility_idx
         for facility_idx in range(facility_count)
-        if x[facility_idx].X > 0.5
+        if float(pyo.value(x[facility_idx])) > 0.5
     )
-    optimal = status == GRB.OPTIMAL
-    try:
-        mip_gap = None if optimal else float(model.MIPGap)
-    except gp.GurobiError:
-        mip_gap = None
-    result = _build_coverage_result(
+    return _build_coverage_result(
         demand_array=demand_array,
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=status,
-        optimal=optimal,
-        mip_gap=mip_gap,
-        solver_name=EMS_COVERAGE_SOLVER_GUROBI,
+        solver_status=pyomo_solver_status(solve_result),
+        optimal=solve_result.optimal,
+        mip_gap=None if solve_result.optimal else pyomo_mip_gap(solve_result),
+        solver_name=EMS_COVERAGE_SOLVER_EXACT,
+        optimization_solver=normalize_optimization_solver(optimization_solver),
     )
-    model.dispose()
-    return result
 
 
 def solve_cvar_coverage(
@@ -845,6 +822,7 @@ def solve_cvar_coverage(
     name: str = "ems_cvar_coverage",
     log_to_console: bool = False,
     solver_params: Mapping[str, float | int | str] | None = None,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
     objective_tolerance: float = DEFAULT_OBJECTIVE_TOLERANCE,
 ) -> MaximumCoverageResult:
     scenarios = np.maximum(np.asarray(demand_scenarios, dtype=float), 0.0)
@@ -870,45 +848,37 @@ def solve_cvar_coverage(
     if facility_budget < 0:
         raise ValueError("facility_budget must be non-negative.")
 
-    model = gp.Model(name)
-    model.Params.OutputFlag = 1 if log_to_console else 0
-
-    effective_solver_params = dict(solver_params or {})
-    effective_solver_params.setdefault("FeasibilityTol", 1e-9)
-    for param_name, value in effective_solver_params.items():
-        setattr(model.Params, param_name, value)
-
-    x = model.addVars(facility_count, vtype=GRB.BINARY, name="x")
-    y = model.addVars(demand_count, vtype=GRB.BINARY, name="y")
-    eta = model.addVar(lb=-GRB.INFINITY, vtype=GRB.CONTINUOUS, name="eta")
-    shortfall = model.addVars(
-        scenario_count,
-        lb=0.0,
-        vtype=GRB.CONTINUOUS,
-        name="shortfall",
-    )
+    model = pyo.ConcreteModel(name=name)
+    model.FACILITIES = pyo.Set(initialize=range(facility_count))
+    model.DEMANDS = pyo.Set(initialize=range(demand_count))
+    model.SCENARIOS = pyo.Set(initialize=range(scenario_count))
+    model.x = pyo.Var(model.FACILITIES, domain=pyo.Binary)
+    model.y = pyo.Var(model.DEMANDS, domain=pyo.Binary)
+    model.eta = pyo.Var(domain=pyo.Reals)
+    model.shortfall = pyo.Var(model.SCENARIOS, domain=pyo.NonNegativeReals)
+    x = model.x
+    y = model.y
+    shortfall = model.shortfall
     scenario_totals = scenarios.sum(axis=1)
 
-    for demand_idx in range(demand_count):
+    def coverage_rule(coverage_model: pyo.ConcreteModel, demand_idx: int) -> pyo.Expression:
         covering_facilities = [
             facility_idx
             for facility_idx in range(facility_count)
             if coverage_array[demand_idx, facility_idx]
         ]
-        model.addConstr(
-            y[demand_idx]
-            <= gp.quicksum(x[facility_idx] for facility_idx in covering_facilities),
-            name=f"coverage[{demand_idx}]",
+        return coverage_model.y[demand_idx] <= sum(
+            coverage_model.x[facility_idx] for facility_idx in covering_facilities
         )
 
-    model.addConstr(
-        gp.quicksum(x[facility_idx] for facility_idx in range(facility_count))
-        <= int(facility_budget),
-        name="facility_budget",
+    model.coverage = pyo.Constraint(model.DEMANDS, rule=coverage_rule)
+    model.facility_budget = pyo.Constraint(
+        expr=sum(x[facility_idx] for facility_idx in range(facility_count))
+        <= int(facility_budget)
     )
 
-    for scenario_idx in range(scenario_count):
-        reward = gp.quicksum(
+    def scenario_reward(scenario_idx: int) -> pyo.Expression:
+        return sum(
             _coverage_weight(
                 float(scenarios[scenario_idx, demand_idx]),
                 float(scenario_totals[scenario_idx]),
@@ -916,73 +886,73 @@ def solve_cvar_coverage(
             * y[demand_idx]
             for demand_idx in range(demand_count)
         )
-        model.addConstr(
-            shortfall[scenario_idx] >= eta - reward,
-            name=f"cvar_shortfall[{scenario_idx}]",
-        )
 
-    cvar_objective = eta - (
-        1.0 / ((1.0 - alpha) * float(scenario_count))
-    ) * gp.quicksum(shortfall[scenario_idx] for scenario_idx in range(scenario_count))
-
-    model.setObjective(cvar_objective, GRB.MAXIMIZE)
-    model.optimize()
-
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            f"CVaR coverage model did not produce a feasible solution; status={status}."
-        )
-
-    cvar_objective_value = float(model.ObjVal)
-    model.addConstr(
-        cvar_objective >= cvar_objective_value - objective_tolerance,
-        name="cvar_primary_objective_floor",
+    model.cvar_shortfall = pyo.Constraint(
+        model.SCENARIOS,
+        rule=lambda coverage_model, scenario_idx: (
+            shortfall[scenario_idx]
+            >= coverage_model.eta - scenario_reward(int(scenario_idx))
+        ),
     )
-    model.setObjective(
-        _build_deterministic_coverage_tie_break_expression(
+
+    model.cvar_objective_expression = pyo.Expression(
+        expr=model.eta - (
+        1.0 / ((1.0 - alpha) * float(scenario_count))
+        ) * sum(shortfall[scenario_idx] for scenario_idx in range(scenario_count))
+    )
+
+    model.objective = pyo.Objective(
+        expr=model.cvar_objective_expression,
+        sense=pyo.maximize,
+    )
+    solve_result = _solve_coverage_model(
+        model,
+        label="CVaR coverage model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
+    )
+
+    cvar_objective_value = float(pyo.value(model.cvar_objective_expression))
+    model.cvar_primary_objective_floor = pyo.Constraint(
+        expr=model.cvar_objective_expression >= cvar_objective_value - objective_tolerance
+    )
+    model.objective.deactivate()
+    model.tie_break_objective = pyo.Objective(
+        expr=_build_deterministic_coverage_tie_break_expression(
             x=x,
             y=y,
             demand_count=demand_count,
             facility_count=facility_count,
         ),
-        GRB.MAXIMIZE,
+        sense=pyo.maximize,
     )
-    model.optimize()
-
-    status = int(model.Status)
-    if int(model.SolCount) <= 0:
-        model.dispose()
-        raise RuntimeError(
-            "CVaR coverage tie-break model did not produce a feasible solution; "
-            f"status={status}."
-        )
+    solve_result = _solve_coverage_model(
+        model,
+        label="CVaR coverage tie-break model",
+        solver_params=solver_params,
+        optimization_solver=optimization_solver,
+        log_to_console=log_to_console,
+    )
 
     selected_indices = tuple(
         facility_idx
         for facility_idx in range(facility_count)
-        if x[facility_idx].X > 0.5
+        if float(pyo.value(x[facility_idx])) > 0.5
     )
-    optimal = status == GRB.OPTIMAL
-    try:
-        mip_gap = None if optimal else float(model.MIPGap)
-    except gp.GurobiError:
-        mip_gap = None
 
-    result = _build_coverage_result(
+    return _build_coverage_result(
         demand_array=scenarios.mean(axis=0),
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=status,
-        optimal=optimal,
-        mip_gap=mip_gap,
-        solver_name="gurobi_cvar",
+        solver_status=pyomo_solver_status(solve_result),
+        optimal=solve_result.optimal,
+        mip_gap=None if solve_result.optimal else pyomo_mip_gap(solve_result),
+        solver_name="cvar",
+        optimization_solver=normalize_optimization_solver(optimization_solver),
         risk_objective_value=cvar_objective_value,
     )
-    model.dispose()
-    return result
 
 
 def run_ems_exact_shap(config: EmsExactShapConfig) -> EmsExactShapOutputs:
@@ -1169,6 +1139,7 @@ def run_ems_exact_shap(config: EmsExactShapConfig) -> EmsExactShapOutputs:
             facility_budget=config.facility_budget,
             name=f"ems_max_coverage_oracle_{hour_idx}",
             solver_params=_build_solver_params(config),
+            optimization_solver=config.optimization_solver,
             objective_tolerance=config.objective_tolerance,
         )
         oracle_value = _realized_coverage_value(
@@ -1631,7 +1602,9 @@ def run_ems_exact_shap(config: EmsExactShapConfig) -> EmsExactShapOutputs:
         "coverage_radius_km": float(config.coverage_radius_km),
         "facility_budget": int(config.facility_budget),
         "coverage_solver": coverage_solver,
-        "oracle_solver": EMS_COVERAGE_SOLVER_GUROBI,
+        "coverage_backend_solver": normalize_optimization_solver(config.optimization_solver),
+        "oracle_solver": EMS_COVERAGE_SOLVER_EXACT,
+        "oracle_backend_solver": normalize_optimization_solver(config.optimization_solver),
         "coverage_matrix_density": float(np.mean(coverage_matrix)),
         "model_name": "XGBRegressor",
         "model_id": str(config.model_id),
@@ -1794,7 +1767,7 @@ def _validate_config(config: EmsExactShapConfig) -> None:
     if config.facility_budget < 0:
         raise ValueError("facility_budget must be non-negative.")
     if config.gurobi_threads <= 0:
-        raise ValueError("gurobi_threads must be strictly positive.")
+        raise ValueError("gurobi_threads/solver_threads must be strictly positive.")
     if config.objective_tolerance < 0:
         raise ValueError("objective_tolerance must be non-negative.")
     if not 0.0 <= config.cvar_alpha < 1.0:
@@ -1820,6 +1793,7 @@ def _validate_config(config: EmsExactShapConfig) -> None:
         "decision_kernel_shap_seed",
     )
     normalize_ems_coverage_solver(config.coverage_solver)
+    normalize_optimization_solver(config.optimization_solver)
 
 
 def _load_ems_frames(
@@ -2279,6 +2253,7 @@ def _solve_decision_values(
             solver_name=solver_name,
             name=f"ems_max_coverage_{coalition_mask}",
             solver_params=_build_solver_params(config),
+            optimization_solver=config.optimization_solver,
             objective_tolerance=config.objective_tolerance,
         )
         decision_values[coalition_mask] = _realized_coverage_value(
@@ -2344,6 +2319,7 @@ def _solve_cvar_decision_values(
             alpha=config.cvar_alpha,
             name=f"ems_cvar_coverage_{coalition_mask}",
             solver_params=_build_solver_params(config),
+            optimization_solver=config.optimization_solver,
             objective_tolerance=config.objective_tolerance,
         )
         decision_values[coalition_mask] = _realized_coverage_value(
@@ -2397,6 +2373,73 @@ def _prepare_coverage_inputs(
     return demand_array, coverage_array, ordered_zip_codes
 
 
+def _build_maximum_coverage_pyomo_model(
+    *,
+    name: str,
+    demand_array: np.ndarray,
+    coverage_array: np.ndarray,
+    facility_budget: int,
+    relax_integrality: bool,
+) -> pyo.ConcreteModel:
+    demand_count, facility_count = coverage_array.shape
+    demand_total = _total_demand(demand_array)
+    variable_domain = pyo.UnitInterval if relax_integrality else pyo.Binary
+
+    model = pyo.ConcreteModel(name=name)
+    model.FACILITIES = pyo.Set(initialize=range(facility_count))
+    model.DEMANDS = pyo.Set(initialize=range(demand_count))
+    model.x = pyo.Var(model.FACILITIES, domain=variable_domain)
+    model.y = pyo.Var(model.DEMANDS, domain=variable_domain)
+
+    def coverage_rule(coverage_model: pyo.ConcreteModel, demand_idx: int) -> pyo.Expression:
+        covering_facilities = [
+            facility_idx
+            for facility_idx in range(facility_count)
+            if coverage_array[demand_idx, facility_idx]
+        ]
+        return coverage_model.y[demand_idx] <= sum(
+            coverage_model.x[facility_idx] for facility_idx in covering_facilities
+        )
+
+    model.coverage = pyo.Constraint(model.DEMANDS, rule=coverage_rule)
+    model.facility_budget = pyo.Constraint(
+        expr=sum(model.x[facility_idx] for facility_idx in range(facility_count))
+        <= int(facility_budget)
+    )
+    model.primary_objective_expression = pyo.Expression(
+        expr=sum(
+            _coverage_weight(float(demand_array[demand_idx]), demand_total)
+            * model.y[demand_idx]
+            for demand_idx in range(demand_count)
+        )
+    )
+    model.objective = pyo.Objective(
+        expr=model.primary_objective_expression,
+        sense=pyo.maximize,
+    )
+    return model
+
+
+def _solve_coverage_model(
+    model: pyo.ConcreteModel,
+    *,
+    label: str,
+    solver_params: Mapping[str, float | int | str] | None,
+    optimization_solver: str,
+    log_to_console: bool,
+):
+    effective_solver_params = dict(solver_params or {})
+    effective_solver_params.setdefault("FeasibilityTol", 1e-9)
+    solve_result = solve_pyomo_model(
+        model,
+        solver_name=optimization_solver,
+        solver_params=effective_solver_params,
+        log_to_console=log_to_console,
+    )
+    require_pyomo_solution(solve_result, problem_label=label)
+    return solve_result
+
+
 def _validate_zip_aligned_demand(
     demand_array: np.ndarray,
     ordered_zip_codes: Sequence[str],
@@ -2440,10 +2483,11 @@ def _build_coverage_result(
     coverage_array: np.ndarray,
     ordered_zip_codes: Sequence[str],
     selected_indices: Sequence[int],
-    solver_status: int,
+    solver_status: int | str,
     optimal: bool,
     mip_gap: float | None,
     solver_name: str,
+    optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
     risk_objective_value: float | None = None,
 ) -> MaximumCoverageResult:
     selected_index_set = sorted({int(facility_idx) for facility_idx in selected_indices})
@@ -2485,10 +2529,11 @@ def _build_coverage_result(
         ),
         selected_facility_indices=selected_indices_tuple,
         covered_zone_indices=covered_indices,
-        solver_status=int(solver_status),
+        solver_status=solver_status,
         optimal=bool(optimal),
         mip_gap=mip_gap,
         solver_name=solver_name,
+        optimization_solver=normalize_optimization_solver(optimization_solver),
         risk_objective_value=risk_objective_value,
     )
 
@@ -2505,21 +2550,21 @@ def _build_solver_params(config: EmsExactShapConfig) -> dict[str, float | int | 
 
 def _build_deterministic_coverage_tie_break_expression(
     *,
-    x: gp.tupledict,
-    y: gp.tupledict,
+    x: pyo.Var,
+    y: pyo.Var,
     demand_count: int,
     facility_count: int,
-) -> gp.LinExpr:
+) -> pyo.Expression:
     """Stable secondary objective for the paper's deterministic tie-break assumption."""
 
     coverage_scale = 1.0 / (max(1, demand_count) + 1.0)
     return -(
-        gp.quicksum(
+        sum(
             (facility_idx + 1) * x[facility_idx]
             for facility_idx in range(facility_count)
         )
         + coverage_scale
-        * gp.quicksum(
+        * sum(
             (demand_idx + 1) * y[demand_idx]
             for demand_idx in range(demand_count)
         )
@@ -2593,7 +2638,8 @@ def _build_coverage_solution_row(
         "coverage_radius_km": float(config.coverage_radius_km),
         "facility_budget": int(config.facility_budget),
         "coverage_solver": solution.solver_name,
-        "solver_status": int(solution.solver_status),
+        "optimization_solver": solution.optimization_solver,
+        "solver_status": solution.solver_status,
         "optimal": bool(solution.optimal),
         "mip_gap": solution.mip_gap,
         "risk_objective_value": solution.risk_objective_value,

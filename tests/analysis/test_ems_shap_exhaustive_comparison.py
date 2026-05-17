@@ -43,7 +43,7 @@ def test_exhaustive_runner_builds_parallel_no_cvar_setting_config(tmp_path) -> N
     config = _build_setting_config(settings[0], args=args, solver_seed=17)
 
     assert config.model_id == "xgb_001"
-    assert config.coverage_solver == "gurobi_lp_relaxation"
+    assert config.coverage_solver == "lp_relaxation"
     assert config.compute_cvar_decision_shap is False
     assert config.n_jobs == 6
     assert config.solver_seed == 17

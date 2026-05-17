@@ -26,7 +26,9 @@ uv run dva-ems-design-joint-dvi --analysis-kind joint_dvi --solver naive --value
 ```
 
 Cluster scripts source `scripts/cluster/env.sh`, run through `uv`, and write logs
-under `logs/cluster`. Regenerate the static launchers with:
+under `logs/cluster`. EMS launchers default to `OPTIMIZATION_SOLVER=highs` and
+`SOLVER_THREADS=1`; setting `OPTIMIZATION_SOLVER=gurobi` syncs the optional
+Gurobi extra before the job runs. Regenerate the static launchers with:
 
 ```bash
 uv run python scripts/generate_cluster_scripts.py

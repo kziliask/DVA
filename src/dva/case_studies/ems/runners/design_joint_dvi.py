@@ -30,7 +30,8 @@ from dva.games import build_design_players, build_joint_players, materialize_dvi
 
 DESIGN_FIELDS = ("solver", "radius_km", "staging_areas")
 SOLVER_ALIASES = {
-    "exact": "gurobi",
+    "exact": "exact",
+    "gurobi": "exact",
     "naive": "naive_greedy",
     "greedy": "greedy_max_cover",
 }
@@ -64,6 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-hours", type=int, default=None)
     parser.add_argument("--background-rows", type=int, default=100)
     parser.add_argument("--train-sample-rows", type=int, default=None)
+    parser.add_argument(
+        "--solver-threads",
+        "--gurobi-threads",
+        dest="gurobi_threads",
+        type=int,
+        default=1,
+    )
+    parser.add_argument("--optimization-solver", choices=("highs", "gurobi"), default="highs")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -92,6 +101,7 @@ def _normalize_solver_name(solver_name: str) -> str:
 def _design_name(design: EmsDesign) -> str:
     solver_label = {
         "gurobi": "exact",
+        "exact": "exact",
         "naive_greedy": "naive",
         "greedy_max_cover": "greedy",
     }.get(design.solver, design.solver)
@@ -209,6 +219,8 @@ def _run_or_load_design_setting(
         coverage_solver=str(design["solver"]),
         coverage_radius_km=float(design["radius_km"]),
         facility_budget=int(design["staging_areas"]),
+        gurobi_threads=args.gurobi_threads,
+        optimization_solver=args.optimization_solver,
         compute_cvar_decision_shap=False,
         compute_ante_decision_shap=args.value_mode == "ante",
         save_coalition_values=args.analysis_kind == "joint_dvi",
@@ -420,6 +432,14 @@ def _dry_run_command(args: argparse.Namespace) -> list[str]:
         command.extend(["--max-hours", str(args.max_hours)])
     if args.train_sample_rows is not None:
         command.extend(["--train-sample-rows", str(args.train_sample_rows)])
+    command.extend(
+        [
+            "--solver-threads",
+            str(args.gurobi_threads),
+            "--optimization-solver",
+            args.optimization_solver,
+        ]
+    )
     if args.overwrite:
         command.append("--overwrite")
     return command
@@ -475,6 +495,8 @@ def main() -> None:
         "model_id": args.model_id,
         "model_record": model_record,
         "value_mode": args.value_mode,
+        "solver_threads": args.gurobi_threads,
+        "optimization_solver": args.optimization_solver,
         "design_players": list(design_players),
         "actual_design": {
             "name": actual.name,

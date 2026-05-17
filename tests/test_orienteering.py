@@ -11,19 +11,7 @@ from dva.model.orienteering import (
 )
 
 
-def _require_gurobi() -> None:
-    gp = pytest.importorskip("gurobipy")
-    try:
-        model = gp.Model()
-        model.Params.OutputFlag = 0
-        model.dispose()
-    except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"Gurobi unavailable: {exc}")
-
-
 def test_solve_orienteering_finds_best_closed_tour() -> None:
-    _require_gurobi()
-
     zone_ids = [0, 1, 2, 3]
     distance_matrix = pd.DataFrame(
         [
@@ -54,8 +42,6 @@ def test_solve_orienteering_finds_best_closed_tour() -> None:
 
 
 def test_solve_orienteering_supports_distinct_start_and_end() -> None:
-    _require_gurobi()
-
     zone_ids = [0, 1, 2, 3]
     distance_matrix = pd.DataFrame(
         [
@@ -85,8 +71,6 @@ def test_solve_orienteering_supports_distinct_start_and_end() -> None:
 
 
 def test_solve_orienteering_raises_when_no_feasible_path_exists() -> None:
-    _require_gurobi()
-
     distance_matrix = pd.DataFrame(
         np.array(
             [

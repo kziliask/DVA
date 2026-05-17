@@ -326,7 +326,7 @@ def run_taxi_rf_exact_shap(config: TaxiExactShapConfig) -> TaxiExactShapOutputs:
         )
         if config.orienteering_method == "exact":
             print(
-                "Exact orienteering runs a Gurobi optimization for every coalition; "
+                "Exact orienteering runs a Pyomo optimization for every coalition; "
                 "use only tiny max-zones/max-hours settings unless you are intentionally "
                 "waiting a long time.",
                 flush=True,

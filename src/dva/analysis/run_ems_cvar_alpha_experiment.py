@@ -48,6 +48,8 @@ DEFAULT_CVAR_ALPHA_GRID = (0.0, 0.5, 0.8, 0.9, 0.95)
 SUPPORTED_EMS_MODELS = ("xgb",)
 SUPPORTED_EMS_SOLVERS = (
     *SUPPORTED_EMS_COVERAGE_SOLVERS,
+    "gurobi",
+    "gurobi_lp_relaxation",
     "gurobi-lp-relaxation",
     "linear-relaxation",
     "lp",
@@ -93,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--solver",
         choices=SUPPORTED_EMS_SOLVERS,
-        default="gurobi",
+        default="exact",
         help="EMS solver for the normal deterministic decision path.",
     )
     parser.add_argument(
@@ -147,7 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xgb-verbosity", type=int, default=0)
     parser.add_argument("--mip-gap", type=float, default=0.0)
     parser.add_argument("--mip-gap-abs", type=float, default=1e-9)
-    parser.add_argument("--gurobi-threads", type=int, default=1)
+    parser.add_argument("--solver-threads", "--gurobi-threads", dest="gurobi_threads", type=int, default=1)
+    parser.add_argument("--optimization-solver", choices=("highs", "gurobi"), default="highs")
     parser.add_argument(
         "--exclude-zip-codes",
         nargs="*",
@@ -383,6 +386,7 @@ def _build_config(
         mip_gap=args.mip_gap,
         mip_gap_abs=args.mip_gap_abs,
         gurobi_threads=args.gurobi_threads,
+        optimization_solver=args.optimization_solver,
         objective_tolerance=args.objective_tolerance,
         coverage_solver=coverage_solver,
         excluded_zip_codes=tuple(str(zip_code) for zip_code in args.exclude_zip_codes),
@@ -718,7 +722,8 @@ def _build_experiment_log(
             "xgb_subsample": float(args.xgb_subsample),
             "xgb_colsample_bytree": float(args.xgb_colsample_bytree),
             "xgb_reg_lambda": float(args.xgb_reg_lambda),
-            "gurobi_threads": int(args.gurobi_threads),
+            "solver_threads": int(args.gurobi_threads),
+            "optimization_solver": str(args.optimization_solver),
         },
         "shared_explained_hours": list(reference_explained_hours or ()),
         "runs": list(manifest_rows),

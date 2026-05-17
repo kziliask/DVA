@@ -76,16 +76,6 @@ def _sum_st_indices(
     return total
 
 
-def _require_gurobi() -> None:
-    gp = pytest.importorskip("gurobipy")
-    try:
-        model = gp.Model()
-        model.Params.OutputFlag = 0
-        model.dispose()
-    except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"Gurobi unavailable: {exc}")
-
-
 class _StubFeatureEvaluator:
     def __init__(self, output_count: int = TARGET_COUNT) -> None:
         self.output_count = output_count
@@ -656,8 +646,6 @@ def test_extended_evaluator_bit_layout() -> None:
 
 
 def test_features_only_backward_compat_regression(tmp_path: Path) -> None:
-    _require_gurobi()
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
         outputs = run_caiso_shap_case_study(
@@ -690,8 +678,6 @@ def test_features_only_backward_compat_regression(tmp_path: Path) -> None:
 
 
 def test_features_only_with_interaction_order_2(tmp_path: Path) -> None:
-    _require_gurobi()
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
         warnings.filterwarnings(

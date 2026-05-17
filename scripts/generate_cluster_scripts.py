@@ -10,6 +10,9 @@ CAISO_NCPUS = 1
 CAISO_MEM = "16gb"
 EMS_NCPUS = 1
 EMS_MEM = "16gb"
+EMS_SOLVER_FLAGS = (
+    '--optimization-solver "${OPTIMIZATION_SOLVER}" --solver-threads "${SOLVER_THREADS}"'
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +70,8 @@ def _jobs() -> list[ClusterJob]:
                     "uv run dva-ems-infodva "
                     f"--model-id {model_id} "
                     f"--out-root results/ems/experiment_a_infodva/{model_id} "
-                    f"--plot-root results/ems/experiment_a_infodva_plots/{model_id}"
+                    f"--plot-root results/ems/experiment_a_infodva_plots/{model_id} "
+                    f"{EMS_SOLVER_FLAGS}"
                 ),
                 ncpus=EMS_NCPUS,
                 mem=EMS_MEM,
@@ -86,6 +90,7 @@ def _jobs() -> list[ClusterJob]:
                         "--baseline-solver exact --target-solver exact "
                         "--baseline-radius-km 1 --target-radius-km 1 "
                         "--baseline-staging-areas 3 --target-staging-areas 8 "
+                        f"{EMS_SOLVER_FLAGS} "
                         f"--outdir results/ems/experiment_b_joint_dvi/{model_id}/{mode}"
                     ),
                     ncpus=EMS_NCPUS,
@@ -105,6 +110,7 @@ def _jobs() -> list[ClusterJob]:
                             f"--baseline-solver exact --target-solver {solver} "
                             "--baseline-radius-km 1 --target-radius-km 1 "
                             "--baseline-staging-areas 8 --target-staging-areas 8 "
+                            f"{EMS_SOLVER_FLAGS} "
                             f"--outdir results/ems/experiment_c_solver_dva/"
                             f"{model_id}/exact_vs_{solver}_{mode}"
                         ),
@@ -118,7 +124,11 @@ def _jobs() -> list[ClusterJob]:
             ClusterJob(
                 group="ems",
                 name="compute_benchmark",
-                command="uv run dva-ems-compute-benchmark --outdir results/ems/compute_benchmark",
+                command=(
+                    "uv run dva-ems-compute-benchmark "
+                    f"{EMS_SOLVER_FLAGS} "
+                    "--outdir results/ems/compute_benchmark"
+                ),
                 ncpus=EMS_NCPUS,
                 mem=EMS_MEM,
                 walltime="72:00:00",
@@ -128,6 +138,7 @@ def _jobs() -> list[ClusterJob]:
                 name="kernel_permutation_benchmark",
                 command=(
                     "uv run dva-ems-kernel-permutation-benchmark "
+                    f"{EMS_SOLVER_FLAGS} "
                     "--outdir results/ems/kernel_permutation_benchmark"
                 ),
                 ncpus=EMS_NCPUS,
@@ -153,9 +164,15 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
-export GUROBI_THREADS="${GUROBI_THREADS:-1}"
+export SOLVER_THREADS="${SOLVER_THREADS:-${GUROBI_THREADS:-1}}"
+export GUROBI_THREADS="${GUROBI_THREADS:-${SOLVER_THREADS}}"
+export OPTIMIZATION_SOLVER="${OPTIMIZATION_SOLVER:-highs}"
 
-uv sync --frozen
+UV_SYNC_ARGS=(--frozen)
+if [[ "${OPTIMIZATION_SOLVER}" == "gurobi" ]]; then
+    UV_SYNC_ARGS+=(--extra gurobi)
+fi
+uv sync "${UV_SYNC_ARGS[@]}"
 """,
         encoding="utf-8",
     )
