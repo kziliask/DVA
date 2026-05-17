@@ -1,4 +1,6 @@
 logs/
+results/caiso/
+results/ems/
 *.pyc
 __pycache__/
 .DS_Store
