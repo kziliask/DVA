@@ -52,6 +52,12 @@ def make_ems_xgb_model_manifest() -> pd.DataFrame:
 EMS_XGB_MODEL_IDS = tuple(make_ems_xgb_model_manifest()["model_id"].astype(str))
 
 
+def _python_scalar(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def resolve_ems_xgb_model_record(model_id: str) -> dict[str, Any]:
     manifest = make_ems_xgb_model_manifest()
     matches = manifest.loc[manifest["model_id"].eq(str(model_id))]
@@ -60,7 +66,7 @@ def resolve_ems_xgb_model_record(model_id: str) -> dict[str, Any]:
             f"Unknown EMS model_id {model_id!r}. Expected one of: "
             + ", ".join(EMS_XGB_MODEL_IDS)
         )
-    return dict(matches.iloc[0])
+    return {str(key): _python_scalar(value) for key, value in matches.iloc[0].items()}
 
 
 def ems_xgb_config_kwargs(record: Mapping[str, Any]) -> dict[str, Any]:

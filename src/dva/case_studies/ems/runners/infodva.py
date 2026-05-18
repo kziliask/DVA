@@ -50,6 +50,7 @@ def build_forward_args(args: argparse.Namespace, passthrough: list[str]) -> list
         "--n-jobs",
         str(args.n_jobs),
         "--compute-ante-infodva",
+        "--no-cvar-decision-shap",
         "--no-plots",
     ]
     if args.overwrite:

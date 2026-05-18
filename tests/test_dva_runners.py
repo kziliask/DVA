@@ -79,6 +79,7 @@ def test_ems_infodva_runner_forwards_exact_3x3_and_ante_infodva() -> None:
         "8",
     ]
     assert "--compute-ante-infodva" in forwarded
+    assert "--no-cvar-decision-shap" in forwarded
     assert "--no-plots" in forwarded
 
 
