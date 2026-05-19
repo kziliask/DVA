@@ -109,3 +109,8 @@ def test_ems_design_joint_dvi_dry_run_command(capsys, monkeypatch) -> None:
     assert "--solver naive" in output
     assert "--value-mode ante" in output
     assert "results/ems/joint_dvi/naive_ante" in output
+
+
+def test_ems_joint_dvi_value_mode_columns_are_explicit() -> None:
+    assert ems_design_joint_dvi._joint_value_column("ante") == "ante_decision_value"
+    assert ems_design_joint_dvi._joint_value_column("post") == "decision_value"

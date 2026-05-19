@@ -110,8 +110,10 @@ class DailyInteractionExplanation:
     order: int
     player_names: tuple[str, ...]
     decision_indices: dict[frozenset[int], float]
+    ead_decision_indices: dict[frozenset[int], float] | None
     predictive_indices: dict[frozenset[int], np.ndarray]
     decision_value_full: float
+    ead_decision_value_full: float | None
     predictive_value_full: np.ndarray
     predictive_value_empty: np.ndarray
 
@@ -139,6 +141,7 @@ class CaisoShapCaseStudyOutputs:
     evaluation_metrics: dict[str, Any]
     run_metadata: dict[str, Any]
     daily_interaction_decision: pd.DataFrame | None = None
+    daily_interaction_ead_decision: pd.DataFrame | None = None
     daily_interaction_predictive: pd.DataFrame | None = None
     daily_shapley_taylor_decision: pd.DataFrame | None = None
     daily_shapley_taylor_predictive: pd.DataFrame | None = None
@@ -1152,6 +1155,16 @@ def run_caiso_shap_case_study_with_artifacts(
                 order=config.interaction_order,
                 method=config.interaction_method,
             )
+            ead_decision_raw = (
+                compute_exact_interaction_values(
+                    ead_decision_characteristic_values,
+                    player_count=player_count,
+                    order=config.interaction_order,
+                    method=config.interaction_method,
+                )
+                if ead_decision_characteristic_values is not None
+                else None
+            )
             predictive_raw = compute_exact_interaction_values(
                 coalition_predictions,
                 player_count=player_count,
@@ -1168,11 +1181,24 @@ def run_caiso_shap_case_study_with_artifacts(
                         subset: float(np.asarray(value, dtype=float))
                         for subset, value in decision_raw.items()
                     },
+                    ead_decision_indices=(
+                        {
+                            subset: float(np.asarray(value, dtype=float))
+                            for subset, value in ead_decision_raw.items()
+                        }
+                        if ead_decision_raw is not None
+                        else None
+                    ),
                     predictive_indices={
                         subset: np.asarray(value, dtype=float)
                         for subset, value in predictive_raw.items()
                     },
                     decision_value_full=float(decision_characteristic_values[-1]),
+                    ead_decision_value_full=(
+                        float(ead_decision_characteristic_values[-1])
+                        if ead_decision_characteristic_values is not None
+                        else None
+                    ),
                     predictive_value_full=np.asarray(coalition_predictions[-1], dtype=float),
                     predictive_value_empty=np.asarray(coalition_predictions[0], dtype=float),
                 )
@@ -1268,6 +1294,9 @@ def run_caiso_shap_case_study_with_artifacts(
     daily_interaction_decision = _build_daily_interaction_decision_frame(
         daily_interactions
     )
+    daily_interaction_ead_decision = _build_daily_interaction_ead_decision_frame(
+        daily_interactions
+    )
     daily_interaction_predictive = _build_daily_interaction_predictive_frame(
         daily_interactions
     )
@@ -1290,6 +1319,22 @@ def run_caiso_shap_case_study_with_artifacts(
             for explanation in daily_interactions
         )
         if daily_interactions
+        else None
+    )
+    interaction_efficiency_gap_ead_decision = (
+        max(
+            abs(
+                sum(explanation.ead_decision_indices.values())
+                - explanation.ead_decision_value_full
+            )
+            for explanation in daily_interactions
+            if explanation.ead_decision_indices is not None
+            and explanation.ead_decision_value_full is not None
+        )
+        if any(
+            explanation.ead_decision_indices is not None
+            for explanation in daily_interactions
+        )
         else None
     )
     interaction_efficiency_gap_predictive = (
@@ -1404,6 +1449,11 @@ def run_caiso_shap_case_study_with_artifacts(
             if interaction_efficiency_gap_decision is None
             else float(interaction_efficiency_gap_decision)
         ),
+        "interaction_efficiency_gap_ead_decision": (
+            None
+            if interaction_efficiency_gap_ead_decision is None
+            else float(interaction_efficiency_gap_ead_decision)
+        ),
         "interaction_efficiency_gap_predictive": (
             None
             if interaction_efficiency_gap_predictive is None
@@ -1431,6 +1481,7 @@ def run_caiso_shap_case_study_with_artifacts(
         evaluation_metrics=evaluation_metrics,
         run_metadata=run_metadata,
         daily_interaction_decision=daily_interaction_decision,
+        daily_interaction_ead_decision=daily_interaction_ead_decision,
         daily_interaction_predictive=daily_interaction_predictive,
         daily_shapley_taylor_decision=daily_shapley_taylor_decision,
         daily_shapley_taylor_predictive=daily_shapley_taylor_predictive,
@@ -1472,6 +1523,11 @@ def write_caiso_shap_case_study_outputs(
             outdir_path / "daily_interaction_decision.csv",
             index=False,
         )
+    if outputs.daily_interaction_ead_decision is not None:
+        outputs.daily_interaction_ead_decision.to_csv(
+            outdir_path / "daily_interaction_ead_decision.csv",
+            index=False,
+        )
     if outputs.daily_interaction_predictive is not None:
         outputs.daily_interaction_predictive.to_csv(
             outdir_path / "daily_interaction_predictive.csv",
@@ -1494,6 +1550,14 @@ def write_caiso_shap_case_study_outputs(
     ):
         outputs.daily_interaction_decision.to_csv(
             outdir_path / "daily_faith_shap_decision.csv",
+            index=False,
+        )
+    if (
+        outputs.run_metadata.get("interaction_method") == "faith_shap"
+        and outputs.daily_interaction_ead_decision is not None
+    ):
+        outputs.daily_interaction_ead_decision.to_csv(
+            outdir_path / "daily_faith_shap_ead_decision.csv",
             index=False,
         )
     if (
@@ -1614,6 +1678,30 @@ def _build_daily_interaction_decision_frame(
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _build_daily_interaction_ead_decision_frame(
+    daily_explanations: Sequence[DailyInteractionExplanation],
+) -> pd.DataFrame | None:
+    if not daily_explanations:
+        return None
+
+    rows: list[dict[str, Any]] = []
+    for explanation in daily_explanations:
+        if explanation.ead_decision_indices is None:
+            continue
+        for subset, value in explanation.ead_decision_indices.items():
+            rows.append(
+                {
+                    "date": explanation.date,
+                    "interaction_method": explanation.method,
+                    "order": explanation.order,
+                    "subset_size": len(subset),
+                    "players": _format_player_subset(subset, explanation.player_names),
+                    "ead_decision_interaction_value": float(value),
+                }
+            )
+    return pd.DataFrame(rows) if rows else None
 
 
 def _build_daily_interaction_predictive_frame(

@@ -5,3 +5,4 @@ results/ems/
 __pycache__/
 .DS_Store
 *.zip
+data/plots/
