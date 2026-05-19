@@ -10,8 +10,8 @@ def test_cluster_scripts_are_static_no_array_jobs() -> None:
     pbs_files = sorted(CLUSTER_ROOT.glob("*/*.pbs"))
     shell_files = sorted(CLUSTER_ROOT.glob("*/*.sh"))
 
-    assert len(pbs_files) == 327
-    assert len(shell_files) == 327
+    assert len(pbs_files) == 727
+    assert len(shell_files) == 727
     assert (CLUSTER_ROOT / "env.sh").exists()
     for pbs_path in pbs_files:
         text = pbs_path.read_text(encoding="utf-8")
@@ -29,6 +29,9 @@ def test_cluster_scripts_include_required_experiment_families() -> None:
         "caiso/joint_dvi_xgb_025_optimistic_ante.pbs",
         "ems/infodva_xgb_001.pbs",
         "ems/infodva_xgb_025.pbs",
+        "ems/joint_dvi_p3_tau1_xgb_001_post.pbs",
+        "ems/joint_dvi_p5_tau2_xgb_013_ante.pbs",
+        "ems/joint_dvi_p8_tau3_xgb_025_post.pbs",
         "ems/joint_dvi_active_design_xgb_001_post.pbs",
         "ems/joint_dvi_active_design_xgb_025_ante.pbs",
         "ems/solver_dva_exact_vs_greedy_xgb_001_ante.pbs",
@@ -71,3 +74,16 @@ def test_ems_cluster_scripts_pass_pyomo_solver_controls() -> None:
         text = shell_path.read_text(encoding="utf-8")
         assert '--optimization-solver "${OPTIMIZATION_SOLVER}"' in text
         assert '--solver-threads "${SOLVER_THREADS}"' in text
+
+
+def test_ems_joint_dvi_grid_uses_fixed_baseline_design() -> None:
+    shell_path = CLUSTER_ROOT / "ems" / "joint_dvi_p5_tau3_xgb_001_ante.sh"
+    text = shell_path.read_text(encoding="utf-8")
+
+    assert "--baseline-solver exact --target-solver exact" in text
+    assert "--baseline-radius-km 1 --target-radius-km 3" in text
+    assert "--baseline-staging-areas 3 --target-staging-areas 5" in text
+    assert (
+        "--outdir results/ems/experiment_b_joint_dvi/xgb_001/p5_tau3/ante"
+        in text
+    )

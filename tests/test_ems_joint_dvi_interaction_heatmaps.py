@@ -7,11 +7,13 @@ import pandas as pd
 import pytest
 
 from dva.plots.make_ems_joint_dvi_interaction_heatmaps import (
+    DEFAULT_PERCENT_VMAX,
     FEATURES,
     INDIVIDUAL_VALUE_KEY,
     SCENARIOS,
     aggregate_individual_values,
     aggregate_interactions,
+    build_parser,
     color_limit,
     design_parameters_present,
     load_individual_value_frame,
@@ -113,3 +115,7 @@ def test_ems_joint_dvi_color_limit_excludes_design_individual_values() -> None:
     )
 
     assert color_limit(interactions, individuals, None) == pytest.approx(0.04)
+
+
+def test_ems_joint_dvi_default_colorbar_spans_full_percent_range() -> None:
+    assert build_parser().parse_args([]).vmax == pytest.approx(DEFAULT_PERCENT_VMAX)

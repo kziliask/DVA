@@ -140,3 +140,14 @@ def test_ems_design_utility_dry_run_command(capsys, monkeypatch) -> None:
 def test_ems_joint_dvi_value_mode_columns_are_explicit() -> None:
     assert ems_design_joint_dvi._joint_value_column("ante") == "ante_decision_value"
     assert ems_design_joint_dvi._joint_value_column("post") == "decision_value"
+
+
+def test_ems_design_joint_dvi_allows_baseline_grid_cell() -> None:
+    design = ems_design_joint_dvi.EmsDesign(
+        name="exact_p3_tau1",
+        solver="exact",
+        radius_km=1.0,
+        staging_areas=3,
+    )
+
+    assert ems_design_joint_dvi._design_players_for_designs(design, design) == ()

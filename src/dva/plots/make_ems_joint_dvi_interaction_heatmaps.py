@@ -19,6 +19,10 @@ import matplotlib.pyplot as plt
 DEFAULT_RESULT_ROOT = Path("results/ems/experiment_b_joint_dvi")
 DEFAULT_OUTDIR = Path("data/plots/ems_joint_dvi_interaction_heatmaps")
 DEFAULT_OUTPUT_PREFIX = "ems_joint_dvi_signed_interaction_heatmap"
+PERCENT_SCALE = 100.0
+PERCENT_DECIMALS = 2
+PERCENT_FLOAT_FORMAT = f"%.{PERCENT_DECIMALS}f"
+DEFAULT_PERCENT_VMAX = 100.0
 INTERACTION_CMAP = plt.get_cmap("cmc.vik")
 DESIGN_INDIVIDUAL_POSITIVE_COLOR = INTERACTION_CMAP(0.92)
 DESIGN_INDIVIDUAL_NEGATIVE_COLOR = INTERACTION_CMAP(0.08)
@@ -98,15 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vmax",
         type=float,
-        default=None,
+        default=DEFAULT_PERCENT_VMAX,
         help=(
-            "Optional absolute color limit. When omitted, the maximum absolute "
-            "aggregated interaction across both heatmaps is used."
+            "Absolute color limit in percentage points. Use 100 for a full "
+            "-100% to 100% colorbar."
         ),
     )
     parser.add_argument(
         "--value-format",
-        default=".3f",
+        default=".2f",
         help="Format specifier used for cell annotations.",
     )
     return parser
@@ -469,6 +473,28 @@ def _design_individual_color(value: float) -> str | tuple[float, ...]:
     return DESIGN_INDIVIDUAL_ZERO_COLOR
 
 
+def format_percent_value(
+    value: float,
+    value_format: str,
+    value_suffix: str = "%",
+) -> str:
+    formatted = format(value, value_format)
+    if formatted.startswith("-0") and float(formatted) == 0.0:
+        formatted = formatted[1:]
+    return f"{formatted}{value_suffix}"
+
+
+def round_percent_columns(
+    frame: pd.DataFrame,
+    columns: Sequence[str],
+) -> pd.DataFrame:
+    rounded = frame.copy()
+    for column in columns:
+        rounded[column] = rounded[column].round(PERCENT_DECIMALS)
+        rounded.loc[rounded[column].eq(0.0), column] = 0.0
+    return rounded
+
+
 def _draw_fixed_design_individual_cells(
     ax: plt.Axes,
     matrix: pd.DataFrame,
@@ -500,6 +526,7 @@ def plot_heatmap(
     colorbar_label: str,
     output_stem: Path,
     value_format: str,
+    value_suffix: str = "%",
 ) -> tuple[Path, Path]:
     cmap = INTERACTION_CMAP.copy()
     cmap.set_bad(MISSING_COLOR)
@@ -513,7 +540,7 @@ def plot_heatmap(
     image = ax.imshow(display_values, cmap=cmap, norm=color_norm, aspect="auto")
     _draw_fixed_design_individual_cells(ax, matrix, values)
 
-    ax.set_title(title, pad=8)
+    _ = title
     ax.set_xlabel("EMS design parameter")
     ax.set_ylabel("EMS feature")
     ax.set_xticks(
@@ -576,7 +603,7 @@ def plot_heatmap(
             ax.text(
                 col_idx,
                 row_idx,
-                format(value, value_format),
+                format_percent_value(float(value), value_format, value_suffix),
                 ha="center",
                 va="center",
                 color=text_color,
@@ -601,8 +628,8 @@ def write_heatmaps(
     outdir: Path = DEFAULT_OUTDIR,
     output_prefix: str = DEFAULT_OUTPUT_PREFIX,
     aggregation: str = "mean",
-    vmax: float | None = None,
-    value_format: str = ".3f",
+    vmax: float | None = DEFAULT_PERCENT_VMAX,
+    value_format: str = ".2f",
 ) -> tuple[Path, ...]:
     apply_plot_style()
     frame = load_interaction_frame(result_root)
@@ -610,16 +637,26 @@ def write_heatmaps(
     individual_frame = load_individual_value_frame(result_root)
     individual_summary = aggregate_individual_values(individual_frame, aggregation)
     design_parameters = design_parameters_present(summary, individual_summary)
+    summary["signed_interaction_value"] *= PERCENT_SCALE
+    individual_summary["signed_individual_value"] *= PERCENT_SCALE
 
     outdir.mkdir(parents=True, exist_ok=True)
     summary_csv = outdir / f"{output_prefix}_{aggregation}_values.csv"
-    summary.to_csv(summary_csv, index=False)
+    round_percent_columns(summary, ("signed_interaction_value",)).to_csv(
+        summary_csv,
+        index=False,
+        float_format=PERCENT_FLOAT_FORMAT,
+    )
     individual_summary_csv = outdir / f"{output_prefix}_{aggregation}_individual_values.csv"
-    individual_summary.to_csv(individual_summary_csv, index=False)
+    round_percent_columns(individual_summary, ("signed_individual_value",)).to_csv(
+        individual_summary_csv,
+        index=False,
+        float_format=PERCENT_FLOAT_FORMAT,
+    )
 
     limit = color_limit(summary, individual_summary, vmax)
     color_norm = TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
-    colorbar_label = f"{aggregation.title()} signed DVI value\n(interactions + feature individual)"
+    colorbar_label = f"{aggregation.title()} signed DVI (%)\n(interactions + feature individual)"
 
     output_paths: list[Path] = [summary_csv, individual_summary_csv]
     for position, value_mode, title in SCENARIOS:

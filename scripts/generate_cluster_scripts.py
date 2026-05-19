@@ -13,6 +13,11 @@ EMS_MEM = "16gb"
 EMS_SOLVER_FLAGS = (
     '--optimization-solver "${OPTIMIZATION_SOLVER}" --solver-threads "${SOLVER_THREADS}"'
 )
+EMS_JOINT_DVI_BASELINE_RADIUS_KM = 1
+EMS_JOINT_DVI_BASELINE_STAGING_AREAS = 3
+EMS_JOINT_DVI_TARGET_RADII_KM = (1, 2, 3)
+EMS_JOINT_DVI_TARGET_STAGING_AREAS = (3, 5, 8)
+EMS_JOINT_DVI_LEGACY_ACTIVE_DESIGN = (8, 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +28,10 @@ class ClusterJob:
     ncpus: int
     mem: str
     walltime: str
+
+
+def _ems_design_label(*, staging_areas: int, radius_km: float | int) -> str:
+    return f"p{int(staging_areas)}_tau{float(radius_km):g}"
 
 
 def _jobs() -> list[ClusterJob]:
@@ -79,6 +88,42 @@ def _jobs() -> list[ClusterJob]:
             )
         )
         for mode in ("post", "ante"):
+            for target_staging_areas in EMS_JOINT_DVI_TARGET_STAGING_AREAS:
+                for target_radius_km in EMS_JOINT_DVI_TARGET_RADII_KM:
+                    if (
+                        target_staging_areas,
+                        target_radius_km,
+                    ) == EMS_JOINT_DVI_LEGACY_ACTIVE_DESIGN:
+                        continue
+                    target_label = _ems_design_label(
+                        staging_areas=target_staging_areas,
+                        radius_km=target_radius_km,
+                    )
+                    jobs.append(
+                        ClusterJob(
+                            group="ems",
+                            name=(
+                                f"joint_dvi_{target_label}_{model_id}_{mode}"
+                            ),
+                            command=(
+                                "uv run dva-ems-design-joint-dvi "
+                                "--analysis-kind joint_dvi "
+                                f"--model-id {model_id} --value-mode {mode} "
+                                "--baseline-solver exact --target-solver exact "
+                                f"--baseline-radius-km {EMS_JOINT_DVI_BASELINE_RADIUS_KM:g} "
+                                f"--target-radius-km {target_radius_km:g} "
+                                "--baseline-staging-areas "
+                                f"{EMS_JOINT_DVI_BASELINE_STAGING_AREAS} "
+                                f"--target-staging-areas {target_staging_areas} "
+                                f"{EMS_SOLVER_FLAGS} "
+                                f"--outdir results/ems/experiment_b_joint_dvi/"
+                                f"{model_id}/{target_label}/{mode}"
+                            ),
+                            ncpus=EMS_NCPUS,
+                            mem=EMS_MEM,
+                            walltime="72:00:00",
+                        )
+                    )
             jobs.append(
                 ClusterJob(
                     group="ems",

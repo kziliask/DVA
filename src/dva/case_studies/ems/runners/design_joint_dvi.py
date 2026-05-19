@@ -167,8 +167,6 @@ def _design_players_for_designs(
             differs = baseline_value != actual_value
         if differs:
             players.append(field)
-    if not players:
-        raise ValueError("EMS design comparison must change at least one design field.")
     return tuple(players)
 
 
@@ -264,7 +262,17 @@ def _write_design_dva(
         }
         for player, value in zip(design_players, shap_values, strict=True)
     ]
-    pd.DataFrame(rows).to_csv(args.outdir / "design_dva.csv", index=False)
+    pd.DataFrame(
+        rows,
+        columns=[
+            "player",
+            "dva_value",
+            "actual",
+            "baseline",
+            "value_mode",
+            "model_id",
+        ],
+    ).to_csv(args.outdir / "design_dva.csv", index=False)
     coalition_rows = []
     for mask, value in enumerate(design_values):
         design = _design_for_mask(
