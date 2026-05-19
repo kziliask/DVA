@@ -119,6 +119,21 @@ def _jobs() -> list[ClusterJob]:
                         walltime="72:00:00",
                     )
                 )
+        jobs.append(
+            ClusterJob(
+                group="ems",
+                name=f"design_utility_dva_{model_id}",
+                command=(
+                    "uv run dva-ems-design-utility-dva "
+                    f"--model-id {model_id} "
+                    f"--out-root results/ems/experiment_d_design_utility/{model_id} "
+                    f"{EMS_SOLVER_FLAGS}"
+                ),
+                ncpus=EMS_NCPUS,
+                mem=EMS_MEM,
+                walltime="72:00:00",
+            )
+        )
     jobs.extend(
         [
             ClusterJob(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Mapping
 
 import pyomo.environ as pyo
@@ -37,6 +38,10 @@ class PyomoSolveResult:
     @property
     def has_solution(self) -> bool:
         return len(self.raw.solution) > 0
+
+    @property
+    def solver_runtime_seconds(self) -> float | None:
+        return pyomo_solver_runtime_seconds(self)
 
 
 def normalize_optimization_solver(solver_name: str | None) -> str:
@@ -124,6 +129,34 @@ def pyomo_mip_gap(solve_result: PyomoSolveResult) -> float | None:
         return None
     denominator = max(1.0, abs(upper_bound))
     return abs(upper_bound - lower_bound) / denominator
+
+
+def pyomo_solver_runtime_seconds(solve_result: PyomoSolveResult) -> float | None:
+    solver = getattr(solve_result.raw, "solver", None)
+    if solver is None:
+        return None
+    for attr_name in ("time", "wallclock_time", "wallclock"):
+        value = _coerce_nonnegative_float(getattr(solver, attr_name, None))
+        if value is not None:
+            return value
+    if hasattr(solver, "get"):
+        for key in ("Time", "time", "wallclock_time", "Wallclock time"):
+            value = _coerce_nonnegative_float(solver.get(key, None))
+            if value is not None:
+                return value
+    return None
+
+
+def _coerce_nonnegative_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or numeric < 0.0:
+        return None
+    return numeric
 
 
 def _configure_solver(

@@ -6,6 +6,7 @@ from pathlib import Path
 from dva.case_studies.caiso.runners import gdsi as caiso_gdsi
 from dva.case_studies.caiso.runners import joint_dvi as caiso_joint_dvi
 from dva.case_studies.ems.runners import design_joint_dvi as ems_design_joint_dvi
+from dva.case_studies.ems.runners import design_utility as ems_design_utility
 from dva.case_studies.ems.runners import infodva as ems_infodva
 
 
@@ -109,6 +110,31 @@ def test_ems_design_joint_dvi_dry_run_command(capsys, monkeypatch) -> None:
     assert "--solver naive" in output
     assert "--value-mode ante" in output
     assert "results/ems/joint_dvi/naive_ante" in output
+
+
+def test_ems_design_utility_dry_run_command(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dva-ems-design-utility-dva",
+            "--model-id",
+            "xgb_001",
+            "--target-solver",
+            "greedy",
+            "--out-root",
+            str(Path("results/ems/design_utility/xgb_001")),
+            "--dry-run",
+        ],
+    )
+
+    ems_design_utility.main()
+
+    output = capsys.readouterr().out.strip()
+    assert output.startswith("uv run dva-ems-design-utility-dva")
+    assert "--model-id xgb_001" in output
+    assert "--target-solver greedy" in output
+    assert "results/ems/design_utility/xgb_001" in output
 
 
 def test_ems_joint_dvi_value_mode_columns_are_explicit() -> None:

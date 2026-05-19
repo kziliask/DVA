@@ -10,8 +10,8 @@ def test_cluster_scripts_are_static_no_array_jobs() -> None:
     pbs_files = sorted(CLUSTER_ROOT.glob("*/*.pbs"))
     shell_files = sorted(CLUSTER_ROOT.glob("*/*.sh"))
 
-    assert len(pbs_files) == 302
-    assert len(shell_files) == 302
+    assert len(pbs_files) == 327
+    assert len(shell_files) == 327
     assert (CLUSTER_ROOT / "env.sh").exists()
     for pbs_path in pbs_files:
         text = pbs_path.read_text(encoding="utf-8")
@@ -33,6 +33,8 @@ def test_cluster_scripts_include_required_experiment_families() -> None:
         "ems/joint_dvi_active_design_xgb_025_ante.pbs",
         "ems/solver_dva_exact_vs_greedy_xgb_001_ante.pbs",
         "ems/solver_dva_exact_vs_naive_xgb_025_post.pbs",
+        "ems/design_utility_dva_xgb_001.pbs",
+        "ems/design_utility_dva_xgb_025.pbs",
         "ems/compute_benchmark.pbs",
         "ems/kernel_permutation_benchmark.pbs",
     ]

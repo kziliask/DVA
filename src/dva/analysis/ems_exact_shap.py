@@ -120,6 +120,7 @@ class MaximumCoverageResult:
     mip_gap: float | None
     solver_name: str = DEFAULT_COVERAGE_SOLVER
     optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER
+    solver_runtime_seconds: float | None = None
     risk_objective_value: float | None = None
 
 
@@ -685,7 +686,7 @@ def solve_lp_relaxation_coverage(
     x = model.x
     y = model.y
     primary_objective = model.primary_objective_expression
-    solve_result = _solve_coverage_model(
+    primary_solve_result = _solve_coverage_model(
         model,
         label="LP-relaxed coverage model",
         solver_params=solver_params,
@@ -707,7 +708,7 @@ def solve_lp_relaxation_coverage(
         ),
         sense=pyo.maximize,
     )
-    solve_result = _solve_coverage_model(
+    tie_break_solve_result = _solve_coverage_model(
         model,
         label="LP-relaxed coverage tie-break model",
         solver_params=solver_params,
@@ -724,11 +725,15 @@ def solve_lp_relaxation_coverage(
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=pyomo_solver_status(solve_result),
+        solver_status=pyomo_solver_status(tie_break_solve_result),
         optimal=False,
         mip_gap=None,
         solver_name=EMS_COVERAGE_SOLVER_LP_RELAXATION,
         optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_runtime_seconds=_sum_solver_runtime_seconds(
+            primary_solve_result,
+            tie_break_solve_result,
+        ),
     )
 
 
@@ -764,7 +769,7 @@ def solve_maximum_coverage(
     x = model.x
     y = model.y
     primary_objective = model.primary_objective_expression
-    solve_result = _solve_coverage_model(
+    primary_solve_result = _solve_coverage_model(
         model,
         label="Maximum coverage model",
         solver_params=solver_params,
@@ -786,7 +791,7 @@ def solve_maximum_coverage(
         ),
         sense=pyo.maximize,
     )
-    solve_result = _solve_coverage_model(
+    tie_break_solve_result = _solve_coverage_model(
         model,
         label="Maximum coverage tie-break model",
         solver_params=solver_params,
@@ -804,11 +809,19 @@ def solve_maximum_coverage(
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=pyomo_solver_status(solve_result),
-        optimal=solve_result.optimal,
-        mip_gap=None if solve_result.optimal else pyomo_mip_gap(solve_result),
+        solver_status=pyomo_solver_status(tie_break_solve_result),
+        optimal=tie_break_solve_result.optimal,
+        mip_gap=(
+            None
+            if tie_break_solve_result.optimal
+            else pyomo_mip_gap(tie_break_solve_result)
+        ),
         solver_name=EMS_COVERAGE_SOLVER_EXACT,
         optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_runtime_seconds=_sum_solver_runtime_seconds(
+            primary_solve_result,
+            tie_break_solve_result,
+        ),
     )
 
 
@@ -905,7 +918,7 @@ def solve_cvar_coverage(
         expr=model.cvar_objective_expression,
         sense=pyo.maximize,
     )
-    solve_result = _solve_coverage_model(
+    primary_solve_result = _solve_coverage_model(
         model,
         label="CVaR coverage model",
         solver_params=solver_params,
@@ -927,7 +940,7 @@ def solve_cvar_coverage(
         ),
         sense=pyo.maximize,
     )
-    solve_result = _solve_coverage_model(
+    tie_break_solve_result = _solve_coverage_model(
         model,
         label="CVaR coverage tie-break model",
         solver_params=solver_params,
@@ -946,11 +959,19 @@ def solve_cvar_coverage(
         coverage_array=coverage_array,
         ordered_zip_codes=ordered_zip_codes,
         selected_indices=selected_indices,
-        solver_status=pyomo_solver_status(solve_result),
-        optimal=solve_result.optimal,
-        mip_gap=None if solve_result.optimal else pyomo_mip_gap(solve_result),
+        solver_status=pyomo_solver_status(tie_break_solve_result),
+        optimal=tie_break_solve_result.optimal,
+        mip_gap=(
+            None
+            if tie_break_solve_result.optimal
+            else pyomo_mip_gap(tie_break_solve_result)
+        ),
         solver_name="cvar",
         optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_runtime_seconds=_sum_solver_runtime_seconds(
+            primary_solve_result,
+            tie_break_solve_result,
+        ),
         risk_objective_value=cvar_objective_value,
     )
 
@@ -2488,6 +2509,7 @@ def _build_coverage_result(
     mip_gap: float | None,
     solver_name: str,
     optimization_solver: str = DEFAULT_OPTIMIZATION_SOLVER,
+    solver_runtime_seconds: float | None = None,
     risk_objective_value: float | None = None,
 ) -> MaximumCoverageResult:
     selected_index_set = sorted({int(facility_idx) for facility_idx in selected_indices})
@@ -2534,6 +2556,7 @@ def _build_coverage_result(
         mip_gap=mip_gap,
         solver_name=solver_name,
         optimization_solver=normalize_optimization_solver(optimization_solver),
+        solver_runtime_seconds=solver_runtime_seconds,
         risk_objective_value=risk_objective_value,
     )
 
@@ -2642,8 +2665,20 @@ def _build_coverage_solution_row(
         "solver_status": solution.solver_status,
         "optimal": bool(solution.optimal),
         "mip_gap": solution.mip_gap,
+        "solver_runtime_seconds": solution.solver_runtime_seconds,
         "risk_objective_value": solution.risk_objective_value,
     }
+
+
+def _sum_solver_runtime_seconds(*solve_results: Any) -> float | None:
+    runtimes = [
+        result.solver_runtime_seconds
+        for result in solve_results
+        if result.solver_runtime_seconds is not None
+    ]
+    if not runtimes:
+        return None
+    return float(sum(runtimes))
 
 
 def _maximum_coverage_decision_changed(
