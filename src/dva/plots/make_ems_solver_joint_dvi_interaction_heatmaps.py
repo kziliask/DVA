@@ -8,7 +8,6 @@ from matplotlib.colors import TwoSlopeNorm
 
 from dva.plots.make_ems_joint_dvi_interaction_heatmaps import (
     DEFAULT_OUTPUT_PREFIX as DEFAULT_EMS_OUTPUT_PREFIX,
-    DEFAULT_PERCENT_VMAX,
     PERCENT_FLOAT_FORMAT,
     PERCENT_SCALE,
     aggregate_individual_values as aggregate_base_individual_values,
@@ -75,10 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vmax",
         type=float,
-        default=DEFAULT_PERCENT_VMAX,
+        default=None,
         help=(
-            "Absolute color limit in percentage points. Use 100 for a full "
-            "-100% to 100% colorbar."
+            "Optional absolute color limit in percentage points. When omitted, "
+            "the maximum absolute aggregated interaction across all four heatmaps is used."
         ),
     )
     parser.add_argument(
@@ -253,7 +252,7 @@ def write_heatmaps(
     outdir: Path = DEFAULT_OUTDIR,
     output_prefix: str = DEFAULT_OUTPUT_PREFIX,
     aggregation: str = "mean",
-    vmax: float | None = DEFAULT_PERCENT_VMAX,
+    vmax: float | None = None,
     value_format: str = ".2f",
 ) -> tuple[Path, ...]:
     apply_plot_style()

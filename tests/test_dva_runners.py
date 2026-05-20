@@ -58,6 +58,71 @@ def test_caiso_joint_dvi_dry_run_uses_model_id(capsys, monkeypatch) -> None:
     assert "results/caiso/joint_dvi/xgb_025/optimistic_ante" in output
 
 
+def test_caiso_joint_dvi_flipped_dry_run_uses_target(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dva-caiso-joint-dvi",
+            "--model-id",
+            "xgb_001",
+            "--target",
+            "conservative",
+            "--value-mode",
+            "post",
+            "--dry-run",
+        ],
+    )
+
+    caiso_joint_dvi.main()
+
+    output = capsys.readouterr().out.strip()
+    assert output.startswith("uv run dva-caiso-joint-dvi")
+    assert "--model-id xgb_001" in output
+    assert "--target conservative" in output
+    assert "--baseline" not in output
+    assert "--value-mode post" in output
+    assert "results/caiso/joint_dvi_flipped/xgb_001/conservative_post" in output
+
+
+def test_caiso_joint_dvi_configs_use_faith_shap_by_default() -> None:
+    baseline_args = caiso_joint_dvi.build_parser().parse_args(
+        [
+            "--model-id",
+            "xgb_001",
+            "--baseline",
+            "conservative",
+            "--value-mode",
+            "post",
+        ]
+    )
+    flipped_args = caiso_joint_dvi.build_parser().parse_args(
+        [
+            "--model-id",
+            "xgb_001",
+            "--target",
+            "optimistic",
+            "--value-mode",
+            "ante",
+        ]
+    )
+    flipped_config = caiso_joint_dvi._config_from_record(flipped_args)
+
+    assert (
+        caiso_joint_dvi._config_from_record(baseline_args).interaction_method
+        == "faith_shap"
+    )
+    assert flipped_config.interaction_method == "faith_shap"
+    assert flipped_config.storage_parameters.throughput_penalty == 5.0
+    assert flipped_config.storage_parameters.energy_capacity == 24.0
+    assert flipped_config.storage_parameters.charge_efficiency == 1.0
+    assert flipped_config.storage_parameters.initial_state_of_charge == 12.0
+    assert (
+        flipped_config.parameter_player_spec is not None
+        and flipped_config.parameter_player_spec.energy_capacity_baseline == 4.0
+    )
+
+
 def test_ems_infodva_runner_forwards_exact_3x3_and_ante_infodva() -> None:
     args = ems_infodva.build_parser().parse_args(["--model-id", "xgb_001"])
 

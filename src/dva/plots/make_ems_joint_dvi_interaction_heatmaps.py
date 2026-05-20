@@ -22,7 +22,6 @@ DEFAULT_OUTPUT_PREFIX = "ems_joint_dvi_signed_interaction_heatmap"
 PERCENT_SCALE = 100.0
 PERCENT_DECIMALS = 2
 PERCENT_FLOAT_FORMAT = f"%.{PERCENT_DECIMALS}f"
-DEFAULT_PERCENT_VMAX = 100.0
 INTERACTION_CMAP = plt.get_cmap("cmc.vik")
 DESIGN_INDIVIDUAL_POSITIVE_COLOR = INTERACTION_CMAP(0.92)
 DESIGN_INDIVIDUAL_NEGATIVE_COLOR = INTERACTION_CMAP(0.08)
@@ -102,10 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vmax",
         type=float,
-        default=DEFAULT_PERCENT_VMAX,
+        default=None,
         help=(
-            "Absolute color limit in percentage points. Use 100 for a full "
-            "-100% to 100% colorbar."
+            "Optional absolute color limit in percentage points. When omitted, "
+            "the maximum absolute aggregated interaction across both heatmaps is used."
         ),
     )
     parser.add_argument(
@@ -628,7 +627,7 @@ def write_heatmaps(
     outdir: Path = DEFAULT_OUTDIR,
     output_prefix: str = DEFAULT_OUTPUT_PREFIX,
     aggregation: str = "mean",
-    vmax: float | None = DEFAULT_PERCENT_VMAX,
+    vmax: float | None = None,
     value_format: str = ".2f",
 ) -> tuple[Path, ...]:
     apply_plot_style()

@@ -625,6 +625,38 @@ def test_extended_evaluator_parameters_for_param_mask() -> None:
                     assert evaluator_variant.parameters_for_param_mask(param_mask) == expected
 
 
+def test_extended_evaluator_capacity_baseline_can_carry_state_of_charge() -> None:
+    actual = StorageDispatchParameters(
+        energy_capacity=24.0,
+        power_limit=1.0,
+        charge_efficiency=1.0,
+        discharge_efficiency=1.0,
+        throughput_penalty=0.0,
+        initial_state_of_charge=12.0,
+        terminal_state_of_charge=12.0,
+    )
+    spec = ParameterPlayerSpec(
+        energy_capacity_is_player=True,
+        energy_capacity_baseline=4.0,
+        initial_state_of_charge_baseline=2.0,
+        terminal_state_of_charge_baseline=2.0,
+    )
+    evaluator = ExtendedPlayerCoalitionEvaluator(
+        feature_evaluator=_StubFeatureEvaluator(),
+        feature_names=("f0",),
+        actual_parameters=actual,
+        parameter_player_spec=spec,
+    )
+
+    assert evaluator.parameters_for_param_mask(0) == replace(
+        actual,
+        energy_capacity=4.0,
+        initial_state_of_charge=2.0,
+        terminal_state_of_charge=2.0,
+    )
+    assert evaluator.parameters_for_param_mask(1) == actual
+
+
 def test_extended_evaluator_bit_layout() -> None:
     feature_count = 3
     spec = ParameterPlayerSpec(

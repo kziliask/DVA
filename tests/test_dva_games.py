@@ -105,6 +105,14 @@ def test_caiso_design_player_baselines() -> None:
     assert spec.energy_capacity_baseline == pytest.approx(2.0)
     assert spec.charge_efficiency_baseline == pytest.approx(0.8)
 
+    flipped_spec = parameter_player_spec_for_baseline(
+        CAISO_ACTUAL_DESIGN,
+        include_state_of_charge=True,
+    )
+    assert flipped_spec.energy_capacity_baseline == pytest.approx(4.0)
+    assert flipped_spec.initial_state_of_charge_baseline == pytest.approx(2.0)
+    assert flipped_spec.terminal_state_of_charge_baseline == pytest.approx(2.0)
+
 
 def test_ems_design_player_baselines() -> None:
     assert EMS_INFO_RADII_KM == (1.0, 2.0, 3.0)

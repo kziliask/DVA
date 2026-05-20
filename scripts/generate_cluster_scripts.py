@@ -70,6 +70,24 @@ def _jobs() -> list[ClusterJob]:
                         walltime="48:00:00",
                     )
                 )
+        for target in ("conservative", "optimistic"):
+            for mode in ("post", "ante"):
+                jobs.append(
+                    ClusterJob(
+                        group="caiso",
+                        name=f"joint_dvi_flipped_{model_id}_{target}_{mode}",
+                        command=(
+                            "uv run dva-caiso-joint-dvi "
+                            f"--model-id {model_id} "
+                            f"--target {target} --value-mode {mode} "
+                            f"--outdir results/caiso/joint_dvi_flipped/{model_id}/"
+                            f"{target}_{mode}"
+                        ),
+                        ncpus=CAISO_NCPUS,
+                        mem=CAISO_MEM,
+                        walltime="48:00:00",
+                    )
+                )
     for model_id in model_ids:
         jobs.append(
             ClusterJob(

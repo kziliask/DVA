@@ -80,7 +80,10 @@ CAISO_BASELINE_DESIGNS = {
 
 def parameter_player_spec_for_baseline(
     baseline: CaisoStorageDesign,
+    *,
+    include_state_of_charge: bool = False,
 ) -> ParameterPlayerSpec:
+    baseline_parameters = baseline.parameters()
     return ParameterPlayerSpec(
         throughput_penalty_baseline=baseline.throughput_penalty,
         efficiency_is_player=True,
@@ -88,6 +91,16 @@ def parameter_player_spec_for_baseline(
         discharge_efficiency_baseline=baseline.efficiency,
         energy_capacity_is_player=True,
         energy_capacity_baseline=baseline.energy_capacity,
+        initial_state_of_charge_baseline=(
+            baseline_parameters.initial_state_of_charge
+            if include_state_of_charge
+            else None
+        ),
+        terminal_state_of_charge_baseline=(
+            baseline_parameters.terminal_state_of_charge
+            if include_state_of_charge
+            else None
+        ),
     )
 
 

@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 
 from dva.plots.make_ems_joint_dvi_interaction_heatmaps import (
-    DEFAULT_PERCENT_VMAX,
     FEATURES,
     INDIVIDUAL_VALUE_KEY,
 )
@@ -15,7 +14,6 @@ from dva.plots.make_ems_solver_joint_dvi_interaction_heatmaps import (
     SOLVER_SCENARIOS,
     aggregate_individual_values,
     aggregate_interactions,
-    build_parser,
     load_individual_value_frame,
     load_interaction_frame,
     solver_scenario_matrix,
@@ -110,7 +108,3 @@ def test_ems_solver_joint_dvi_heatmap_uses_solver_comparison_dimension(
     assert matrix.loc["temp_c", INDIVIDUAL_VALUE_KEY] == pytest.approx(20.0)
     assert matrix.loc[INDIVIDUAL_VALUE_KEY, "solver"] == pytest.approx(30.0)
     assert np.isnan(matrix.loc[INDIVIDUAL_VALUE_KEY, INDIVIDUAL_VALUE_KEY])
-
-
-def test_ems_solver_joint_dvi_default_colorbar_spans_full_percent_range() -> None:
-    assert build_parser().parse_args([]).vmax == pytest.approx(DEFAULT_PERCENT_VMAX)

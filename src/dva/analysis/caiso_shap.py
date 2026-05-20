@@ -359,10 +359,12 @@ class ExtendedPlayerCoalitionEvaluator:
             kwargs["charge_efficiency"] = self.actual_parameters.charge_efficiency
             kwargs["discharge_efficiency"] = self.actual_parameters.discharge_efficiency
 
+        use_energy_capacity_baseline = False
         if self.spec.energy_capacity_is_player:
+            use_energy_capacity_baseline = not (param_mask & (1 << bit))
             kwargs["energy_capacity"] = (
                 self.actual_parameters.energy_capacity
-                if param_mask & (1 << bit)
+                if not use_energy_capacity_baseline
                 else self.spec.energy_capacity_baseline
             )
             bit += 1
@@ -370,8 +372,22 @@ class ExtendedPlayerCoalitionEvaluator:
             kwargs["energy_capacity"] = self.actual_parameters.energy_capacity
 
         kwargs["power_limit"] = self.actual_parameters.power_limit
-        kwargs["initial_state_of_charge"] = self.actual_parameters.initial_state_of_charge
-        kwargs["terminal_state_of_charge"] = self.actual_parameters.terminal_state_of_charge
+        kwargs["initial_state_of_charge"] = (
+            self.spec.initial_state_of_charge_baseline
+            if (
+                use_energy_capacity_baseline
+                and self.spec.initial_state_of_charge_baseline is not None
+            )
+            else self.actual_parameters.initial_state_of_charge
+        )
+        kwargs["terminal_state_of_charge"] = (
+            self.spec.terminal_state_of_charge_baseline
+            if (
+                use_energy_capacity_baseline
+                and self.spec.terminal_state_of_charge_baseline is not None
+            )
+            else self.actual_parameters.terminal_state_of_charge
+        )
         return StorageDispatchParameters(**kwargs)
 
 
@@ -414,6 +430,8 @@ class ParameterPlayerSpec:
     when that player is IN and the corresponding baseline when that player is
     OUT. The defaults encode an uninformed planner baseline: no throughput
     penalty, lossless storage, and effectively unbounded energy capacity.
+    Optional state-of-charge baselines move with the energy-capacity baseline
+    when the capacity player is OUT.
     """
 
     throughput_penalty_is_player: bool = False
@@ -423,6 +441,8 @@ class ParameterPlayerSpec:
     discharge_efficiency_baseline: float = 1.0
     energy_capacity_is_player: bool = False
     energy_capacity_baseline: float = 1e6
+    initial_state_of_charge_baseline: float | None = None
+    terminal_state_of_charge_baseline: float | None = None
 
     @property
     def player_count(self) -> int:

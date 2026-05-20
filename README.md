@@ -21,6 +21,7 @@ uv sync
 uv run pytest -q
 uv run dva-caiso-gdsi --dry-run
 uv run dva-caiso-joint-dvi --baseline conservative --value-mode post --max-days 1 --dry-run
+uv run dva-caiso-joint-dvi --target conservative --value-mode post --max-days 1 --dry-run
 uv run dva-ems-infodva --dry-run
 uv run dva-ems-design-joint-dvi --analysis-kind joint_dvi --solver naive --value-mode ante --dry-run
 ```

@@ -10,8 +10,8 @@ def test_cluster_scripts_are_static_no_array_jobs() -> None:
     pbs_files = sorted(CLUSTER_ROOT.glob("*/*.pbs"))
     shell_files = sorted(CLUSTER_ROOT.glob("*/*.sh"))
 
-    assert len(pbs_files) == 727
-    assert len(shell_files) == 727
+    assert len(pbs_files) == 827
+    assert len(shell_files) == 827
     assert (CLUSTER_ROOT / "env.sh").exists()
     for pbs_path in pbs_files:
         text = pbs_path.read_text(encoding="utf-8")
@@ -27,6 +27,8 @@ def test_cluster_scripts_include_required_experiment_families() -> None:
         "caiso/gdsi_xgb_025.pbs",
         "caiso/joint_dvi_xgb_001_conservative_post.pbs",
         "caiso/joint_dvi_xgb_025_optimistic_ante.pbs",
+        "caiso/joint_dvi_flipped_xgb_001_conservative_post.pbs",
+        "caiso/joint_dvi_flipped_xgb_025_optimistic_ante.pbs",
         "ems/infodva_xgb_001.pbs",
         "ems/infodva_xgb_025.pbs",
         "ems/joint_dvi_p3_tau1_xgb_001_post.pbs",
@@ -74,6 +76,19 @@ def test_ems_cluster_scripts_pass_pyomo_solver_controls() -> None:
         text = shell_path.read_text(encoding="utf-8")
         assert '--optimization-solver "${OPTIMIZATION_SOLVER}"' in text
         assert '--solver-threads "${SOLVER_THREADS}"' in text
+
+
+def test_caiso_flipped_joint_dvi_scripts_use_target_orientation() -> None:
+    shell_path = CLUSTER_ROOT / "caiso" / "joint_dvi_flipped_xgb_001_optimistic_ante.sh"
+    text = shell_path.read_text(encoding="utf-8")
+
+    assert "uv run dva-caiso-joint-dvi" in text
+    assert "--target optimistic --value-mode ante" in text
+    assert "--baseline" not in text
+    assert (
+        "--outdir results/caiso/joint_dvi_flipped/xgb_001/optimistic_ante"
+        in text
+    )
 
 
 def test_ems_joint_dvi_grid_uses_fixed_baseline_design() -> None:
