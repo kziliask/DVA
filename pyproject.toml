@@ -37,6 +37,7 @@ dva-ems-design-joint-dvi = "dva.case_studies.ems.runners.design_joint_dvi:main"
 dva-ems-design-utility-dva = "dva.case_studies.ems.runners.design_utility:main"
 dva-ems-compute-benchmark = "dva.case_studies.ems.runners.compute_benchmark:main"
 dva-ems-kernel-permutation-benchmark = "dva.case_studies.ems.runners.kernel_permutation_benchmark:main"
+dva-ems-baseline-experiment = "dva.analysis.run_ems_baseline_experiment:main"
 
 [build-system]
 requires = ["hatchling"]
