@@ -1,8 +1,11 @@
 logs/
 results/caiso/
 results/ems/
+results/bootstrap_ci/
 *.pyc
 __pycache__/
 .DS_Store
 *.zip
 data/plots/
+scripts/cluster/caiso
+scripts/cluster/ems

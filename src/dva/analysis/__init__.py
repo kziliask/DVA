@@ -75,6 +75,10 @@ _EXPORT_MODULES = {
     "compute_truncated_rbo": "dva.analysis.evaluation_metrics",
     "identify_invariant_policy_days": "dva.analysis.evaluation_metrics",
     "rank_features_from_scores": "dva.analysis.evaluation_metrics",
+    "BootstrapConfig": "dva.analysis.paired_bootstrap",
+    "bootstrap_metric_table": "dva.analysis.paired_bootstrap",
+    "infer_metric_direction": "dva.analysis.paired_bootstrap",
+    "wide_metric_frame": "dva.analysis.paired_bootstrap",
 }
 
 _SHARED_EXPORTS = {

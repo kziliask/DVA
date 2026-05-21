@@ -78,6 +78,8 @@ FONT_CANDIDATES = (
 class DecisionRegimeOutputs:
     png: Path
     pdf: Path
+    policy_change_png: Path
+    policy_change_pdf: Path
     csv: Path
 
 
@@ -178,6 +180,8 @@ def main() -> None:
     )
     print(f"Wrote EMS decision-regime PNG to {outputs.png}")
     print(f"Wrote EMS decision-regime PDF to {outputs.pdf}")
+    print(f"Wrote EMS coalition policy-change PNG to {outputs.policy_change_png}")
+    print(f"Wrote EMS coalition policy-change PDF to {outputs.policy_change_pdf}")
     print(f"Wrote EMS decision-regime summary CSV to {outputs.csv}")
 
 
@@ -227,7 +231,24 @@ def write_ems_decision_regime_heatmaps(
         cmap_name=cmap_name,
         panel_c_value=panel_c_value,
     )
-    return DecisionRegimeOutputs(png=png_path, pdf=pdf_path, csv=csv_path)
+
+    policy_png_path = outdir / f"{output_stem}_coalition_policy_change_rate.png"
+    policy_pdf_path = outdir / f"{output_stem}_coalition_policy_change_rate.pdf"
+    plot_coalition_policy_change_heatmap(
+        summary=summary,
+        coverage_radii_km=coverage_radii,
+        facility_budgets=budgets,
+        output_paths=(policy_png_path, policy_pdf_path),
+        cmap_name=cmap_name,
+    )
+
+    return DecisionRegimeOutputs(
+        png=png_path,
+        pdf=pdf_path,
+        policy_change_png=policy_png_path,
+        policy_change_pdf=policy_pdf_path,
+        csv=csv_path,
+    )
 
 
 def load_coverage_summary(design_utility_root: Path) -> pd.DataFrame:
@@ -279,7 +300,15 @@ def load_decision_activity_summary(
         metadata = _read_json(run_dir / "run_metadata.json")
         if str(metadata.get("coverage_solver", "")) != "exact":
             continue
-        frame = pd.read_csv(path, usecols=["decision_characteristic_value"])
+        frame = pd.read_csv(
+            path,
+            usecols=[
+                "timestamp_hour",
+                "coalition_mask",
+                "decision_characteristic_value",
+                "decision_selected_facility_indices",
+            ],
+        )
         values = frame["decision_characteristic_value"].astype(float).abs()
         run_records.append(
             {
@@ -288,6 +317,9 @@ def load_decision_activity_summary(
                 "model_id": str(metadata.get("model_id", run_dir.parent.parent.name)),
                 "decision_characteristic_nonzero_rate": float(
                     (values > nonzero_tolerance).mean()
+                ),
+                "coalition_policy_change_rate": compute_coalition_policy_change_rate(
+                    frame
                 ),
                 "mean_abs_decision_characteristic": float(values.mean()),
                 "max_abs_decision_characteristic": float(values.max()),
@@ -305,6 +337,7 @@ def load_decision_activity_summary(
                 "decision_characteristic_nonzero_rate",
                 "mean",
             ),
+            coalition_policy_change_rate=("coalition_policy_change_rate", "mean"),
             mean_abs_decision_characteristic=(
                 "mean_abs_decision_characteristic",
                 "mean",
@@ -512,6 +545,7 @@ def merge_regime_summaries(
     required = [
         "mean_uncovered_demand",
         "decision_characteristic_nonzero_rate",
+        "coalition_policy_change_rate",
         "total_post_joint_info_value",
     ]
     missing = summary.loc[summary[required].isna().any(axis=1)]
@@ -596,8 +630,8 @@ def plot_decision_regime_heatmaps(
                 f"{row.regime_label}"
             ),
         ),
-        title="B. Decision Activity",
-        colorbar_label="Nonzero decision-characteristic rate",
+        title="B. DVA Coalition Activity",
+        colorbar_label="Active InfoDVA coalitions (%)",
         cmap_name=cmap_name,
         radii=radii,
         budgets=budgets,
@@ -623,6 +657,46 @@ def plot_decision_regime_heatmaps(
     )
 
     fig.subplots_adjust(left=0.075, right=0.985, top=0.84, bottom=0.17, wspace=0.38)
+    for output_path in output_paths:
+        if output_path.suffix.lower() == ".png":
+            fig.savefig(output_path, bbox_inches="tight", dpi=320)
+        else:
+            fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_coalition_policy_change_heatmap(
+    *,
+    summary: pd.DataFrame,
+    coverage_radii_km: Sequence[float],
+    facility_budgets: Sequence[int],
+    output_paths: tuple[Path, Path],
+    cmap_name: str,
+) -> None:
+    apply_plot_style()
+    radii = tuple(float(value) for value in coverage_radii_km)
+    budgets = tuple(int(value) for value in facility_budgets)
+
+    fig, ax = plt.subplots(1, 1, figsize=(4.8, 4.75), constrained_layout=False)
+    draw_heatmap_panel(
+        ax=ax,
+        values=_matrix(summary, radii, budgets, "coalition_policy_change_rate"),
+        annotations=_annotation_matrix(
+            summary,
+            radii,
+            budgets,
+            lambda row: f"{100.0 * row.coalition_policy_change_rate:.1f}%",
+        ),
+        title="Coalition Policy Change Rate",
+        colorbar_label="Coalition policy change rate (%)",
+        cmap_name=cmap_name,
+        radii=radii,
+        budgets=budgets,
+        ylabel=True,
+        value_is_fraction=True,
+    )
+
+    fig.subplots_adjust(left=0.17, right=0.92, top=0.84, bottom=0.17)
     for output_path in output_paths:
         if output_path.suffix.lower() == ".png":
             fig.savefig(output_path, bbox_inches="tight", dpi=320)
@@ -752,6 +826,44 @@ def format_uncovered(value: float) -> str:
     if abs(value) < 0.1:
         return "<0.1"
     return f"{value:.1f}"
+
+
+def compute_coalition_policy_change_rate(coalition_values: pd.DataFrame) -> float:
+    frame = coalition_values.loc[
+        :,
+        [
+            "timestamp_hour",
+            "coalition_mask",
+            "decision_selected_facility_indices",
+        ],
+    ].copy()
+    frame["coalition_mask"] = frame["coalition_mask"].astype(int)
+    frame["_selected_policy"] = frame["decision_selected_facility_indices"].map(
+        _parse_facility_index_set
+    )
+
+    baselines = frame.loc[
+        frame["coalition_mask"].eq(0),
+        ["timestamp_hour", "_selected_policy"],
+    ]
+    if baselines.empty:
+        raise ValueError("Coalition values are missing the empty-coalition baseline.")
+    if baselines["timestamp_hour"].duplicated().any():
+        raise ValueError("Expected one empty-coalition baseline per timestamp.")
+
+    baseline_by_hour = baselines.set_index("timestamp_hour")["_selected_policy"]
+    baseline_policy = frame["timestamp_hour"].map(baseline_by_hour)
+    if baseline_policy.isna().any():
+        raise ValueError("Some coalition rows have no matching baseline timestamp.")
+
+    return float(frame["_selected_policy"].ne(baseline_policy).mean())
+
+
+def _parse_facility_index_set(raw_indices: object) -> tuple[int, ...]:
+    parsed = json.loads(str(raw_indices))
+    if not isinstance(parsed, list):
+        raise ValueError(f"Expected a JSON list of facility indices, got {raw_indices}")
+    return tuple(sorted(int(value) for value in parsed))
 
 
 def _info_player_from_pair(left: str, right: str) -> str | None:
