@@ -471,7 +471,7 @@ def _waterfall_filename_label(timestamp: pd.Timestamp, time_column: str) -> str:
 def _target_has_time_component(raw_target: str, target: pd.Timestamp) -> bool:
     if target != target.normalize():
         return True
-    return any(token in raw_target for token in ("T", ":", " "))
+    return any(marker in raw_target for marker in ("T", ":", " "))
 
 
 def select_waterfall_row(

@@ -1,11 +1,28 @@
+# Local outputs
 logs/
-results/caiso/
-results/ems/
-results/bootstrap_ci/
-*.pyc
-__pycache__/
-.DS_Store
-*.zip
+results/
 data/plots/
 scripts/cluster/caiso
 scripts/cluster/ems
+
+# Python and tool caches
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+__pycache__/
+.DS_Store
+
+# Local archives, credentials, and model artifacts
+*.zip
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.ckpt
+*.pt
+*.pth
+*checkpoint*
+*wandb*
