@@ -1,11 +1,6 @@
 # Decision Value Attribution
 
-Code and runner-ready data for the Decision Value Attribution (DVA) experiments
-in the CAISO storage-dispatch and EMS staging case studies.
-
-The repository is intended to be reproducible from the committed processed
-inputs. Experiment outputs, logs, generated cluster launchers, local virtual
-environments, and checkpoints are ignored by Git.
+Code for "Decision-Value Attribution in Predict-then-Optimize Systems" and the associated CAISO storage-dispatch and EMS staging case studies.
 
 ## Repository Layout
 
@@ -19,7 +14,7 @@ environments, and checkpoints are ignored by Git.
 - `data/cleaned`: processed CAISO price/weather table.
 - `data/ems_data/processed`: processed EMS feature, target, geography, and
   distance-matrix inputs.
-- `tests`: unit and smoke tests for attribution, optimization, runners, and
+- `tests`: unit and other tests for attribution, optimization, runners, and
   output normalization.
 
 ## Setup
@@ -36,18 +31,6 @@ optional extra and pass `--optimization-solver gurobi` to EMS runners:
 
 ```bash
 uv sync --frozen --extra gurobi
-```
-
-## Smoke Runs
-
-These commands check the main entry points without launching full experiments:
-
-```bash
-uv run dva-caiso-gdsi --dry-run
-uv run dva-caiso-joint-dvi --baseline conservative --value-mode post --max-days 1 --dry-run
-uv run dva-caiso-joint-dvi --target conservative --value-mode ante --max-days 1 --dry-run
-uv run dva-ems-infodva --model-id xgb_001 --radius 1 --staging 3 --dry-run
-uv run dva-ems-design-joint-dvi --analysis-kind joint_dvi --solver naive --value-mode post --max-hours 1 --dry-run
 ```
 
 ## Rerun The Baselines
@@ -131,13 +114,13 @@ helpers in `dva.analysis.evaluation_metrics`.
 
 ## Cluster Runs
 
-Static PBS/shell launchers are generated, not committed:
+Static PBS/shell launchers are generated through the following script:
 
 ```bash
 uv run python scripts/generate_cluster_scripts.py
 ```
 
-Generated launchers source `scripts/cluster/env.sh`, run `uv sync --frozen`,
+Generated launchers use `scripts/cluster/env.sh`, run `uv sync --frozen`,
 write logs under `logs/cluster`, and write experiment artifacts under
 `results/`. Set `OPTIMIZATION_SOLVER=gurobi` for Gurobi-backed EMS jobs; the
 cluster environment will sync the optional Gurobi extra automatically.
