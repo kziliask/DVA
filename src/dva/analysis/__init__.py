@@ -26,7 +26,6 @@ _EXPORT_MODULES = {
     "DailyShapExplanation": "dva.analysis.caiso_shap",
     "DailyShapleyTaylorExplanation": "dva.analysis.caiso_shap",
     "ExtendedPlayerCoalitionEvaluator": "dva.analysis.caiso_shap",
-    "ExactRandomForestCoalitionEvaluator": "dva.analysis.caiso_shap",
     "ParameterPlayerSpec": "dva.analysis.caiso_shap",
     "SUPPORTED_INTERACTION_METHODS": "dva.analysis.caiso_shap",
     "build_default_storage_parameters": "dva.analysis.caiso_shap",

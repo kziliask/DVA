@@ -25,6 +25,7 @@ DEFAULT_CMAP = "YlGnBu"
 DEFAULT_COVERAGE_RADII_KM = (1.0, 2.0, 3.0)
 DEFAULT_FACILITY_BUDGETS = (3, 5, 8)
 DEFAULT_NONZERO_TOLERANCE = 1e-12
+DEFAULT_TOP_JOINT_DVI_TERMS = 8
 GRID_COLOR = "#ffffff"
 TEXT_COLOR = "#202020"
 TEXT_COLOR_ON_DARK = "#ffffff"
@@ -54,6 +55,20 @@ DESIGN_LABELS = {
     "radius_km": "radius",
     "staging_areas": "budget",
 }
+DETAILED_FEATURE_LABELS = {
+    "hour": "time-of-day",
+    "day_of_week": "day-of-week",
+    "temp_c": "temperature",
+    "precip_mm": "precipitation",
+    "citywide_ems_incidents_lag_1": "citywide demand",
+    "ems_incidents_lag_1": "lagged demand",
+    "neighbor_ems_incidents_lag_1_mean": "neighboring demand",
+    "zone_hour_baseline": "ZH",
+}
+DETAILED_DESIGN_LABELS = {
+    "radius_km": "radius",
+    "staging_areas": "budget",
+}
 REGIME_LABELS = {
     (1.0, 3): "active",
     (1.0, 5): "active",
@@ -80,6 +95,9 @@ class DecisionRegimeOutputs:
     pdf: Path
     policy_change_png: Path
     policy_change_pdf: Path
+    top_terms_png: Path
+    top_terms_pdf: Path
+    top_terms_csv: Path
     csv: Path
 
 
@@ -147,18 +165,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--panel-c-value",
-        choices=("joint-info", "cross-dvi"),
-        default="joint-info",
+        choices=("top-term", "joint-info", "cross-dvi"),
+        default="top-term",
         help=(
-            "Cell value for Panel C. 'joint-info' uses total post-JointDVI "
-            "information value; 'cross-dvi' uses total absolute information-design "
-            "Cross-DVI intensity. Cell annotations always show the top Cross-DVI pair."
+            "Cell value for Panel C. 'top-term' uses the largest individual "
+            "post-JointDVI main effect or info-design interaction; 'joint-info' "
+            "uses total post-JointDVI information main-effect value; 'cross-dvi' "
+            "uses total absolute information-design Cross-DVI intensity."
         ),
     )
     parser.add_argument(
         "--allow-incomplete-grid",
         action="store_true",
         help="Allow missing grid cells instead of failing.",
+    )
+    parser.add_argument(
+        "--top-joint-dvi-terms",
+        type=int,
+        default=DEFAULT_TOP_JOINT_DVI_TERMS,
+        help="Number of post-JointDVI terms to show in each detailed regime panel.",
     )
     return parser
 
@@ -177,11 +202,15 @@ def main() -> None:
         nonzero_tolerance=args.nonzero_tolerance,
         panel_c_value=args.panel_c_value,
         allow_incomplete_grid=args.allow_incomplete_grid,
+        top_joint_dvi_terms=args.top_joint_dvi_terms,
     )
     print(f"Wrote EMS decision-regime PNG to {outputs.png}")
     print(f"Wrote EMS decision-regime PDF to {outputs.pdf}")
     print(f"Wrote EMS coalition policy-change PNG to {outputs.policy_change_png}")
     print(f"Wrote EMS coalition policy-change PDF to {outputs.policy_change_pdf}")
+    print(f"Wrote EMS top JointDVI terms PNG to {outputs.top_terms_png}")
+    print(f"Wrote EMS top JointDVI terms PDF to {outputs.top_terms_pdf}")
+    print(f"Wrote EMS top JointDVI terms CSV to {outputs.top_terms_csv}")
     print(f"Wrote EMS decision-regime summary CSV to {outputs.csv}")
 
 
@@ -196,8 +225,9 @@ def write_ems_decision_regime_heatmaps(
     facility_budgets: Sequence[int] = DEFAULT_FACILITY_BUDGETS,
     cmap_name: str = DEFAULT_CMAP,
     nonzero_tolerance: float = DEFAULT_NONZERO_TOLERANCE,
-    panel_c_value: str = "joint-info",
+    panel_c_value: str = "top-term",
     allow_incomplete_grid: bool = False,
+    top_joint_dvi_terms: int = DEFAULT_TOP_JOINT_DVI_TERMS,
 ) -> DecisionRegimeOutputs:
     outdir.mkdir(parents=True, exist_ok=True)
     coverage_radii = tuple(float(value) for value in coverage_radii_km)
@@ -209,10 +239,13 @@ def write_ems_decision_regime_heatmaps(
         nonzero_tolerance=nonzero_tolerance,
     )
     joint_dvi = load_joint_dvi_summary(joint_dvi_root)
+    joint_dvi_terms = load_post_joint_dvi_terms(joint_dvi_root)
+    top_joint_dvi_terms_summary = summarize_top_post_joint_dvi_terms(joint_dvi_terms)
     summary = merge_regime_summaries(
         coverage=coverage,
         activity=activity,
         joint_dvi=joint_dvi,
+        top_joint_dvi_terms=top_joint_dvi_terms_summary,
         coverage_radii_km=coverage_radii,
         facility_budgets=budgets,
         allow_incomplete_grid=allow_incomplete_grid,
@@ -220,6 +253,9 @@ def write_ems_decision_regime_heatmaps(
 
     csv_path = outdir / f"{output_stem}.csv"
     summary.to_csv(csv_path, index=False)
+
+    top_terms_csv_path = outdir / f"{output_stem}_top_post_joint_dvi_terms.csv"
+    joint_dvi_terms.to_csv(top_terms_csv_path, index=False)
 
     png_path = outdir / f"{output_stem}.png"
     pdf_path = outdir / f"{output_stem}.pdf"
@@ -242,11 +278,25 @@ def write_ems_decision_regime_heatmaps(
         cmap_name=cmap_name,
     )
 
+    top_terms_png_path = outdir / f"{output_stem}_top_post_joint_dvi_terms.png"
+    top_terms_pdf_path = outdir / f"{output_stem}_top_post_joint_dvi_terms.pdf"
+    plot_top_post_joint_dvi_terms(
+        terms=joint_dvi_terms,
+        coverage_radii_km=coverage_radii,
+        facility_budgets=budgets,
+        output_paths=(top_terms_png_path, top_terms_pdf_path),
+        cmap_name=cmap_name,
+        top_n=top_joint_dvi_terms,
+    )
+
     return DecisionRegimeOutputs(
         png=png_path,
         pdf=pdf_path,
         policy_change_png=policy_png_path,
         policy_change_pdf=policy_pdf_path,
+        top_terms_png=top_terms_png_path,
+        top_terms_pdf=top_terms_pdf_path,
+        top_terms_csv=top_terms_csv_path,
         csv=csv_path,
     )
 
@@ -524,11 +574,184 @@ def load_joint_dvi_summary(joint_dvi_root: Path) -> pd.DataFrame:
     )
 
 
+def load_post_joint_dvi_terms(joint_dvi_root: Path) -> pd.DataFrame:
+    metadata_paths = sorted(joint_dvi_root.glob("xgb_*/**/design_dva_metadata.json"))
+    if not metadata_paths:
+        raise FileNotFoundError(
+            f"No design_dva_metadata.json files found under {joint_dvi_root}"
+        )
+
+    term_records = []
+    for metadata_path in metadata_paths:
+        metadata = _read_json(metadata_path)
+        if str(metadata.get("value_mode", "")) != "post":
+            continue
+        actual_design = metadata.get("actual_design", {})
+        if str(actual_design.get("solver", "")) != "exact":
+            continue
+
+        run_dir = metadata_path.parent
+        model_id = str(metadata["model_id"])
+        coverage_radius_km = float(actual_design["radius_km"])
+        facility_budget = int(actual_design["staging_areas"])
+
+        joint_summary_path = run_dir / "joint_summary_dva.csv"
+        if joint_summary_path.exists():
+            joint_summary = pd.read_csv(
+                joint_summary_path,
+                usecols=["player", "player_kind", "dva_mean_abs"],
+            )
+            info_summary = joint_summary.loc[
+                joint_summary["player_kind"].astype(str).eq("info")
+            ].copy()
+            info_summary["dva_mean_abs"] = info_summary["dva_mean_abs"].astype(float)
+            for row in info_summary.itertuples(index=False):
+                info_player = str(row.player)
+                term_records.append(
+                    {
+                        "coverage_radius_km": coverage_radius_km,
+                        "facility_budget": facility_budget,
+                        "model_id": model_id,
+                        "term_kind": "info_main",
+                        "term_key": f"main:{info_player}",
+                        "term_label": format_post_joint_term_label(info_player),
+                        "mean_abs_post_joint_dvi": float(row.dva_mean_abs),
+                    }
+                )
+
+        interaction_path = run_dir / "dvi_interactions.csv"
+        if not interaction_path.exists():
+            continue
+        interactions = pd.read_csv(
+            interaction_path,
+            usecols=["players", "interaction_type", "decision_interaction_value"],
+        )
+        interactions = interactions.loc[
+            interactions["interaction_type"].astype(str).eq("Cross-DVI")
+        ].copy()
+        if interactions.empty:
+            continue
+        pairs = interactions["players"].astype(str).str.split("|", n=1, expand=True)
+        interactions["left_player"] = pairs[0]
+        interactions["right_player"] = pairs[1]
+        interactions["info_player"] = interactions.apply(
+            lambda row: _info_player_from_pair(row["left_player"], row["right_player"]),
+            axis=1,
+        )
+        interactions["design_player"] = interactions.apply(
+            lambda row: _design_player_from_pair(row["left_player"], row["right_player"]),
+            axis=1,
+        )
+        interactions = interactions.loc[
+            interactions["info_player"].notna()
+            & interactions["design_player"].isin(DESIGN_PLAYERS)
+        ].copy()
+        if interactions.empty:
+            continue
+        interactions["abs_interaction"] = interactions[
+            "decision_interaction_value"
+        ].astype(float).abs()
+        pair_summary = (
+            interactions.groupby(["info_player", "design_player"], as_index=False)
+            .agg(mean_abs_post_joint_dvi=("abs_interaction", "mean"))
+            .sort_values(["info_player", "design_player"])
+        )
+        for row in pair_summary.itertuples(index=False):
+            info_player = str(row.info_player)
+            design_player = str(row.design_player)
+            term_records.append(
+                {
+                    "coverage_radius_km": coverage_radius_km,
+                    "facility_budget": facility_budget,
+                    "model_id": model_id,
+                    "term_kind": "info_design_interaction",
+                    "term_key": f"cross:{info_player}:{design_player}",
+                    "term_label": format_post_joint_term_label(
+                        info_player,
+                        design_player=design_player,
+                    ),
+                    "mean_abs_post_joint_dvi": float(row.mean_abs_post_joint_dvi),
+                }
+            )
+
+    if not term_records:
+        raise ValueError(f"No post JointDVI term records found under {joint_dvi_root}")
+
+    terms = pd.DataFrame.from_records(term_records)
+    term_summary = (
+        terms.groupby(
+            [
+                "coverage_radius_km",
+                "facility_budget",
+                "term_kind",
+                "term_key",
+                "term_label",
+            ],
+            as_index=False,
+        )
+        .agg(
+            joint_dvi_run_count=("model_id", "nunique"),
+            mean_abs_post_joint_dvi=("mean_abs_post_joint_dvi", "mean"),
+        )
+        .sort_values(
+            [
+                "coverage_radius_km",
+                "facility_budget",
+                "mean_abs_post_joint_dvi",
+                "term_label",
+            ],
+            ascending=[True, True, False, True],
+        )
+    )
+    term_summary["value_pct_points"] = (
+        100.0 * term_summary["mean_abs_post_joint_dvi"].astype(float)
+    )
+    return term_summary.reset_index(drop=True)
+
+
+def summarize_top_post_joint_dvi_terms(terms: pd.DataFrame) -> pd.DataFrame:
+    ordered = terms.sort_values(
+        [
+            "coverage_radius_km",
+            "facility_budget",
+            "mean_abs_post_joint_dvi",
+            "term_label",
+        ],
+        ascending=[True, True, False, True],
+    )
+    top_terms = (
+        ordered.drop_duplicates(["coverage_radius_km", "facility_budget"])
+        .rename(
+            columns={
+                "term_kind": "top_post_joint_dvi_term_kind",
+                "term_key": "top_post_joint_dvi_term_key",
+                "term_label": "top_post_joint_dvi_term_label",
+                "mean_abs_post_joint_dvi": "top_post_joint_dvi_value",
+                "value_pct_points": "top_post_joint_dvi_pct_points",
+            }
+        )
+        .loc[
+            :,
+            [
+                "coverage_radius_km",
+                "facility_budget",
+                "top_post_joint_dvi_term_kind",
+                "top_post_joint_dvi_term_key",
+                "top_post_joint_dvi_term_label",
+                "top_post_joint_dvi_value",
+                "top_post_joint_dvi_pct_points",
+            ],
+        ]
+    )
+    return top_terms.reset_index(drop=True)
+
+
 def merge_regime_summaries(
     *,
     coverage: pd.DataFrame,
     activity: pd.DataFrame,
     joint_dvi: pd.DataFrame,
+    top_joint_dvi_terms: pd.DataFrame,
     coverage_radii_km: Sequence[float],
     facility_budgets: Sequence[int],
     allow_incomplete_grid: bool,
@@ -541,12 +764,18 @@ def merge_regime_summaries(
         grid.merge(coverage, on=["coverage_radius_km", "facility_budget"], how="left")
         .merge(activity, on=["coverage_radius_km", "facility_budget"], how="left")
         .merge(joint_dvi, on=["coverage_radius_km", "facility_budget"], how="left")
+        .merge(
+            top_joint_dvi_terms,
+            on=["coverage_radius_km", "facility_budget"],
+            how="left",
+        )
     )
     required = [
         "mean_uncovered_demand",
         "decision_characteristic_nonzero_rate",
         "coalition_policy_change_rate",
         "total_post_joint_info_value",
+        "top_post_joint_dvi_value",
     ]
     missing = summary.loc[summary[required].isna().any(axis=1)]
     if not missing.empty and not allow_incomplete_grid:
@@ -562,6 +791,13 @@ def merge_regime_summaries(
     summary["cross_dvi_intensity"] = summary["cross_dvi_intensity"].fillna(0.0)
     summary["top_cross_dvi_value"] = summary["top_cross_dvi_value"].fillna(0.0)
     summary["top_cross_dvi_interaction"] = summary["top_cross_dvi_interaction"].fillna("")
+    summary["top_post_joint_dvi_value"] = summary["top_post_joint_dvi_value"].fillna(0.0)
+    summary["top_post_joint_dvi_pct_points"] = summary[
+        "top_post_joint_dvi_pct_points"
+    ].fillna(0.0)
+    summary["top_post_joint_dvi_term_label"] = summary[
+        "top_post_joint_dvi_term_label"
+    ].fillna("")
     summary["regime_label"] = summary.apply(
         lambda row: REGIME_LABELS.get(
             (float(row.coverage_radius_km), int(row.facility_budget)),
@@ -570,6 +806,7 @@ def merge_regime_summaries(
         axis=1,
     )
     summary["panel_c_top_annotation"] = summary.apply(_panel_c_top_annotation, axis=1)
+    summary["panel_c_main_annotation"] = summary.apply(_panel_c_main_annotation, axis=1)
     return summary.sort_values(["coverage_radius_km", "facility_budget"]).reset_index(
         drop=True
     )
@@ -588,15 +825,8 @@ def plot_decision_regime_heatmaps(
     radii = tuple(float(value) for value in coverage_radii_km)
     budgets = tuple(int(value) for value in facility_budgets)
 
-    panel_c_column = (
-        "total_post_joint_info_value"
-        if panel_c_value == "joint-info"
-        else "cross_dvi_intensity"
-    )
-    panel_c_label = (
-        "Post-JointDVI value"
-        if panel_c_value == "joint-info"
-        else "Info-design Cross-DVI intensity"
+    panel_c_column, panel_c_label, panel_c_annotation_column, panel_c_title = (
+        panel_c_plot_spec(panel_c_value)
     )
     panel_c_values = 100.0 * _matrix(summary, radii, budgets, panel_c_column)
 
@@ -646,10 +876,10 @@ def plot_decision_regime_heatmaps(
             budgets,
             lambda row: (
                 f"{100.0 * getattr(row, panel_c_column):.1f}%\n"
-                f"{row.panel_c_top_annotation}"
+                f"{getattr(row, panel_c_annotation_column)}"
             ),
         ),
-        title="C. Top Interactions",
+        title=panel_c_title,
         colorbar_label=f"{panel_c_label} (%)",
         cmap_name=cmap_name,
         radii=radii,
@@ -697,6 +927,152 @@ def plot_coalition_policy_change_heatmap(
     )
 
     fig.subplots_adjust(left=0.17, right=0.92, top=0.84, bottom=0.17)
+    for output_path in output_paths:
+        if output_path.suffix.lower() == ".png":
+            fig.savefig(output_path, bbox_inches="tight", dpi=320)
+        else:
+            fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_top_post_joint_dvi_terms(
+    *,
+    terms: pd.DataFrame,
+    coverage_radii_km: Sequence[float],
+    facility_budgets: Sequence[int],
+    output_paths: tuple[Path, Path],
+    cmap_name: str,
+    top_n: int,
+) -> None:
+    apply_plot_style()
+    radii = tuple(float(value) for value in coverage_radii_km)
+    budgets = tuple(int(value) for value in facility_budgets)
+    terms_per_panel = max(1, int(top_n))
+
+    finite_values = terms["value_pct_points"].dropna().astype(float)
+    xmax = float(finite_values.max()) if not finite_values.empty else 1.0
+    if xmax <= 0.0:
+        xmax = 1.0
+    xlim = 1.22 * xmax
+    label_offset = 0.018 * xlim
+    cmap = plt.get_cmap(cmap_name)
+
+    fig, axes = plt.subplots(
+        len(radii),
+        len(budgets),
+        figsize=(16.8, 11.2),
+        sharex=True,
+        squeeze=False,
+    )
+
+    for row_idx, radius in enumerate(radii):
+        for col_idx, budget in enumerate(budgets):
+            ax = axes[row_idx, col_idx]
+            all_panel_terms = terms.loc[
+                np.isclose(terms["coverage_radius_km"], radius)
+                & terms["facility_budget"].eq(int(budget))
+            ].copy()
+            main_effect_total = all_panel_terms.loc[
+                all_panel_terms["term_kind"].eq("info_main"),
+                "value_pct_points",
+            ].sum()
+            interaction_total = all_panel_terms.loc[
+                all_panel_terms["term_kind"].eq("info_design_interaction"),
+                "value_pct_points",
+            ].sum()
+            panel_terms = all_panel_terms.sort_values(
+                ["mean_abs_post_joint_dvi", "term_label"],
+                ascending=[False, True],
+            ).head(terms_per_panel)
+
+            ax.set_title(
+                format_design_regime_title(radius, budget),
+                loc="left",
+                fontsize=11.0,
+                fontweight="bold",
+                pad=18,
+            )
+            ax.text(
+                0.0,
+                1.02,
+                (
+                    f"Total main effect: {main_effect_total:.1f}%, "
+                    f"total interaction: {interaction_total:.1f}%"
+                ),
+                transform=ax.transAxes,
+                ha="left",
+                va="bottom",
+                fontsize=8.9,
+                color=TEXT_COLOR,
+            )
+            ax.set_xlim(0.0, xlim)
+            ax.grid(axis="x", color="#e5e5e5", linewidth=0.75)
+            ax.tick_params(axis="x", labelsize=8.8)
+            ax.tick_params(axis="y", length=0, labelsize=8.6)
+            for spine_name in ("top", "right", "left"):
+                ax.spines[spine_name].set_visible(False)
+            ax.spines["bottom"].set_color("#bdbdbd")
+
+            if panel_terms.empty:
+                ax.set_yticks([])
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    color="#666666",
+                    fontsize=9.0,
+                )
+                continue
+
+            values = panel_terms["value_pct_points"].to_numpy(dtype=float)
+            y_positions = np.arange(len(panel_terms))
+            colors = [
+                cmap(0.32 + 0.58 * (float(value) / xmax if xmax else 0.0))
+                for value in values
+            ]
+            ax.barh(
+                y_positions,
+                values,
+                color=colors,
+                edgecolor=GRID_COLOR,
+                linewidth=0.55,
+            )
+            ax.set_yticks(y_positions)
+            ax.set_yticklabels(panel_terms["term_label"].to_list(), fontsize=8.2)
+            ax.invert_yaxis()
+
+            for y_position, value in zip(y_positions, values, strict=True):
+                ax.text(
+                    min(value + label_offset, 0.985 * xlim),
+                    y_position,
+                    f"{value:.2f}",
+                    ha="left",
+                    va="center",
+                    fontsize=8.0,
+                    color=TEXT_COLOR,
+                )
+
+    fig.suptitle(
+        "Top post-JointDVI terms by EMS design regime",
+        fontsize=15.0,
+        y=0.985,
+    )
+    fig.supxlabel(
+        "Absolute post-JointDVI value (percentage points of realized coverage)",
+        fontsize=11.2,
+        y=0.03,
+    )
+    fig.subplots_adjust(
+        left=0.14,
+        right=0.985,
+        top=0.9,
+        bottom=0.075,
+        hspace=0.82,
+        wspace=0.68,
+    )
     for output_path in output_paths:
         if output_path.suffix.lower() == ".png":
             fig.savefig(output_path, bbox_inches="tight", dpi=320)
@@ -812,10 +1188,62 @@ def _panel_c_top_annotation(row: pd.Series) -> str:
     return "baseline"
 
 
+def _panel_c_main_annotation(row: pd.Series) -> str:
+    top_feature = str(row.get("top_joint_info_feature", ""))
+    if top_feature and top_feature != "nan":
+        return format_post_joint_term_label(top_feature)
+    return "baseline"
+
+
+def panel_c_plot_spec(panel_c_value: str) -> tuple[str, str, str, str]:
+    if panel_c_value == "top-term":
+        return (
+            "top_post_joint_dvi_value",
+            "Top term value",
+            "top_post_joint_dvi_term_label",
+            "C. Top Terms",
+        )
+    if panel_c_value == "joint-info":
+        return (
+            "total_post_joint_info_value",
+            "Post-JointDVI main-effect total",
+            "panel_c_main_annotation",
+            "C. Main Effects",
+        )
+    if panel_c_value == "cross-dvi":
+        return (
+            "cross_dvi_intensity",
+            "Info-design Cross-DVI intensity",
+            "panel_c_top_annotation",
+            "C. Top Interactions",
+        )
+    raise ValueError(f"Unknown Panel C value mode: {panel_c_value}")
+
+
+def format_design_regime_title(radius: float, budget: int) -> str:
+    regime = REGIME_LABELS.get((float(radius), int(budget)), "")
+    suffix = f" ({regime})" if regime else ""
+    return rf"$\tau={radius:g}$ km, $p={int(budget)}${suffix}"
+
+
 def format_interaction_label(info_player: str, design_player: str) -> str:
     info_label = FEATURE_LABELS.get(info_player, info_player)
     design_label = DESIGN_LABELS.get(design_player, design_player)
     return rf"{info_label} $\times$ {design_label}"
+
+
+def format_post_joint_term_label(
+    info_player: str,
+    *,
+    design_player: str | None = None,
+) -> str:
+    info_label = DETAILED_FEATURE_LABELS.get(info_player, info_player)
+    if design_player is not None:
+        design_label = DETAILED_DESIGN_LABELS.get(design_player, design_player)
+        return rf"{info_label} $\times$ {design_label}"
+    if info_player == "zone_hour_baseline":
+        return "ZH baseline"
+    return f"{info_label} main effect"
 
 
 def format_uncovered(value: float) -> str:

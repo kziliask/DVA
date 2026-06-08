@@ -26,3 +26,4 @@ __pycache__/
 *.pth
 *checkpoint*
 *wandb*
+*_old.py

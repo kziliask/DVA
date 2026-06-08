@@ -173,7 +173,7 @@ def _make_mock_split_and_training_artifacts() -> tuple[TrainExplainSplit, ModelT
     )
     training_artifacts = ModelTrainingArtifacts(
         model=model,
-        model_name="rf",
+        model_name="xgb",
         model_description="mock_model",
         feature_columns=feature_columns,
         target_columns=target_columns,
@@ -249,7 +249,7 @@ def _run_mock_case_study(
         )
         outputs = run_caiso_shap_case_study(
             CaisoShapCaseStudyConfig(
-                model_name="rf",
+                model_name="xgb",
                 max_days=2,
                 storage_parameters=actual_parameters,
                 interaction_order=interaction_order,
@@ -681,7 +681,7 @@ def test_features_only_backward_compat_regression(tmp_path: Path) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
         outputs = run_caiso_shap_case_study(
-            CaisoShapCaseStudyConfig(model_name="mlp", max_days=2)
+            CaisoShapCaseStudyConfig(model_name="xgb", max_days=2)
         )
     write_caiso_shap_case_study_outputs(outputs, tmp_path)
 
@@ -718,7 +718,7 @@ def test_features_only_with_interaction_order_2(tmp_path: Path) -> None:
         )
         outputs_order_2 = run_caiso_shap_case_study(
             CaisoShapCaseStudyConfig(
-                model_name="mlp",
+                model_name="xgb",
                 max_days=2,
                 interaction_order=2,
                 interaction_method="shapley_taylor",
@@ -726,7 +726,7 @@ def test_features_only_with_interaction_order_2(tmp_path: Path) -> None:
         )
         outputs_order_1 = run_caiso_shap_case_study(
             CaisoShapCaseStudyConfig(
-                model_name="mlp",
+                model_name="xgb",
                 max_days=2,
                 interaction_order=1,
                 interaction_method="shapley_taylor",

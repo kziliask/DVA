@@ -245,11 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", action="append", default=None)
     parser.add_argument(
         "--model-family",
-        choices=("all", "xgb", "nn", "torch_mlp"),
+        choices=("all", "xgb"),
         default="xgb",
         help=(
-            "Restrict the manifest to one model family. Defaults to XGBoost because "
-            "the seasonal experiment multiplies runs by four folds."
+            "Restrict the manifest to the XGBoost model family."
         ),
     )
     parser.add_argument("--overwrite", action="store_true")

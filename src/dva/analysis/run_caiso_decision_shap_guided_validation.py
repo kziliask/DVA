@@ -47,11 +47,6 @@ DEFAULT_RANDOM_MASK_SEED = 20260510
 SAGE_RESULT_STATUS_KEY = "sage_selection_status"
 LOFO_RESULT_STATUS_KEY = "lofo_selection_status"
 DEFAULT_STORAGE_PARAMETER_TEMPLATE = build_default_storage_parameters()
-NN_BATCH_SIZE = 64
-NN_MAX_EPOCHS = 300
-NN_EARLY_STOPPING_PATIENCE = 25
-NN_ACTIVATION = "relu"
-NN_BATCH_NORM = False
 METRIC_KEYS = (
     "mae",
     "mse",
@@ -123,46 +118,16 @@ def make_model_manifest() -> pd.DataFrame:
     xgb_design.insert(0, "run", np.arange(1, len(xgb_design) + 1))
     xgb_design.insert(0, "model_id", [f"xgb_{run:03d}" for run in xgb_design["run"]])
     xgb_design.insert(1, "model_name", "xgb")
-
-    nn_levels = {
-        "hidden_layers": [2, 1, 3, 4, 5],
-        "hidden_width": [128, 32, 64, 192, 256],
-        "dropout": [0.10, 0.00, 0.05, 0.20, 0.30],
-        "learning_rate": [1e-3, 1e-4, 3e-4, 3e-3, 1e-2],
-        "weight_decay": [1e-4, 0.0, 1e-5, 1e-3, 1e-2],
-        "init_seed": [20260510, 101, 202, 303, 404],
-    }
-    nn_design = pd.DataFrame(
-        {
-            name: [levels[symbol] for symbol in oa[:, factor_idx]]
-            for factor_idx, (name, levels) in enumerate(nn_levels.items())
-        }
-    )
-    nn_design.insert(0, "run", np.arange(1, len(nn_design) + 1))
-    nn_design.insert(0, "model_id", [f"nn_{run:03d}" for run in nn_design["run"]])
-    nn_design.insert(1, "model_name", "torch_mlp")
-    nn_design["batch_size"] = NN_BATCH_SIZE
-    nn_design["max_epochs"] = NN_MAX_EPOCHS
-    nn_design["early_stopping_patience"] = NN_EARLY_STOPPING_PATIENCE
-    nn_design["activation"] = NN_ACTIVATION
-    nn_design["batch_norm"] = NN_BATCH_NORM
-
-    return pd.concat([xgb_design, nn_design], ignore_index=True, sort=False)
+    return xgb_design
 
 
 def _filter_manifest_by_model_family(
     manifest: pd.DataFrame,
     model_family: str,
 ) -> pd.DataFrame:
-    if model_family == "all":
+    if model_family in {"all", "xgb"}:
         return manifest.reset_index(drop=True)
-    if model_family == "xgb":
-        return manifest.loc[manifest["model_name"] == "xgb"].reset_index(drop=True)
-    if model_family in {"nn", "torch_mlp"}:
-        return manifest.loc[manifest["model_name"] == "torch_mlp"].reset_index(
-            drop=True
-        )
-    raise ValueError("model_family must be one of: all, xgb, nn, torch_mlp.")
+    raise ValueError("model_family must be one of: all, xgb.")
 
 
 def build_fixed_caiso_guided_validation_split(
@@ -608,9 +573,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", action="append", default=None)
     parser.add_argument(
         "--model-family",
-        choices=("all", "xgb", "nn", "torch_mlp"),
+        choices=("all", "xgb"),
         default="all",
-        help="Restrict the manifest to one model family. Use 'nn' or 'torch_mlp' for neural-net runs only.",
+        help="Restrict the manifest to the XGBoost family.",
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -2116,22 +2081,6 @@ def _build_config_for_record(
             xgb_colsample_bytree=float(record["colsample_bytree"]),
             xgb_reg_lambda=float(record["reg_lambda"]),
         )
-    if model_name == "torch_mlp":
-        hidden_layers = int(record["hidden_layers"])
-        hidden_width = int(record["hidden_width"])
-        return CaisoShapCaseStudyConfig(
-            **common,
-            random_state=int(record["init_seed"]),
-            mlp_hidden_layer_sizes=tuple(hidden_width for _ in range(hidden_layers)),
-            mlp_max_iter=int(record["max_epochs"]),
-            mlp_dropout=float(record["dropout"]),
-            mlp_weight_decay=float(record["weight_decay"]),
-            mlp_batch_size=int(record["batch_size"]),
-            mlp_early_stopping_patience=int(record["early_stopping_patience"]),
-            mlp_activation=str(record["activation"]),
-            mlp_batch_norm=bool(record["batch_norm"]),
-            learning_rate=float(record["learning_rate"]),
-        )
     raise ValueError(f"Unsupported model_name in manifest: {model_name}")
 
 
@@ -2394,13 +2343,6 @@ def _build_experiment_metadata(
         },
         "validation_max_days": args.validation_max_days,
         "test_max_days": args.test_max_days,
-        "nn_fixed_parameters": {
-            "batch_size": NN_BATCH_SIZE,
-            "max_epochs": NN_MAX_EPOCHS,
-            "early_stopping_patience": NN_EARLY_STOPPING_PATIENCE,
-            "activation": NN_ACTIVATION,
-            "batch_norm": NN_BATCH_NORM,
-        },
     }
 
 

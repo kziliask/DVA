@@ -20,7 +20,7 @@ class CaisoRegretShapCaseStudyTests(unittest.TestCase):
     def test_one_day_regret_case_study_produces_standard_shap_outputs(self) -> None:
         outputs = run_caiso_regret_shap_case_study(
             CaisoRegretShapCaseStudyConfig(
-                model_name="ridge",
+                model_name="xgb",
                 holdout_days=360,
                 max_train_days=3,
                 max_days=1,
@@ -32,8 +32,8 @@ class CaisoRegretShapCaseStudyTests(unittest.TestCase):
         self.assertEqual(len(outputs.daily_full_dispatch), 24)
         self.assertEqual(len(outputs.summary_shap), 8)
         self.assertEqual(outputs.run_metadata["experiment_type"], "caiso_regret_predictor_shap")
-        self.assertEqual(outputs.run_metadata["base_model_name"], "ridge")
-        self.assertEqual(outputs.run_metadata["regret_model_name"], "ridge")
+        self.assertEqual(outputs.run_metadata["base_model_name"], "xgb")
+        self.assertEqual(outputs.run_metadata["regret_model_name"], "xgb")
         self.assertEqual(outputs.run_metadata["regret_target_column"], "actual_daily_regret")
         self.assertEqual(
             outputs.run_metadata["predictive_shap_family"],
@@ -95,8 +95,9 @@ class CaisoRegretShapCaseStudyTests(unittest.TestCase):
             places=6,
         )
 
-        self.assertEqual(resolve_regret_model_name("spo_mlp"), "torch_mlp")
-        self.assertEqual(resolve_regret_model_name("mlp"), "mlp")
+        self.assertEqual(resolve_regret_model_name("xgb"), "xgb")
+        with self.assertRaisesRegex(ValueError, "Only model_name='xgb'"):
+            resolve_regret_model_name("mlp")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             outdir = Path(tmpdir) / "results"
@@ -106,7 +107,7 @@ class CaisoRegretShapCaseStudyTests(unittest.TestCase):
             self.assertTrue((outdir / "regret_predictions.csv").exists())
             with (outdir / "run_metadata.json").open(encoding="utf-8") as handle:
                 metadata = json.load(handle)
-            self.assertEqual(metadata["regret_model_name"], "ridge")
+            self.assertEqual(metadata["regret_model_name"], "xgb")
 
             plot_paths = create_comparison_plots(
                 daily_shap_path=outdir / "daily_shap.csv",

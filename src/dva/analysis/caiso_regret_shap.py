@@ -35,10 +35,7 @@ from dva.model.storage_dispatch import (
 from dva.model.train import (
     DEFAULT_DATASET_PATH,
     DEFAULT_HOLDOUT_DAYS,
-    DEFAULT_MLP_HIDDEN_LAYER_SIZES,
-    DEFAULT_MLP_MAX_ITER,
     DEFAULT_MODEL_NAME,
-    DEFAULT_TORCH_LEARNING_RATE,
     ModelTrainingArtifacts,
     SUPPORTED_MODEL_NAMES,
     load_default_train_explain_split,
@@ -64,15 +61,6 @@ class CaisoRegretShapCaseStudyConfig:
     model_name: str = DEFAULT_MODEL_NAME
     random_state: int = DEFAULT_RANDOM_STATE
     n_jobs: int = DEFAULT_RF_N_JOBS
-    mlp_hidden_layer_sizes: tuple[int, ...] = DEFAULT_MLP_HIDDEN_LAYER_SIZES
-    mlp_max_iter: int = DEFAULT_MLP_MAX_ITER
-    learning_rate: float | None = None
-    mse_learning_rate: float | None = None
-    spo_learning_rate: float | None = None
-    training_verbose: bool = False
-    training_log_every: int | None = None
-    spo_processes: int | None = None
-    spo_warm_start_with_mse: bool = False
     solver_seed: int = DEFAULT_SOLVER_SEED
     mip_gap: float = DEFAULT_MIP_GAP
     mip_gap_abs: float = DEFAULT_MIP_GAP_ABS
@@ -168,16 +156,6 @@ def run_caiso_regret_shap_case_study(
         target_columns=split.target_columns,
         random_state=config.random_state,
         n_jobs=config.n_jobs,
-        mlp_hidden_layer_sizes=config.mlp_hidden_layer_sizes,
-        mlp_max_iter=config.mlp_max_iter,
-        learning_rate=config.learning_rate,
-        mse_learning_rate=config.mse_learning_rate,
-        spo_learning_rate=config.spo_learning_rate,
-        storage_parameters=config.storage_parameters,
-        training_verbose=config.training_verbose,
-        training_log_every=config.training_log_every,
-        spo_processes=config.spo_processes,
-        spo_warm_start_with_mse=config.spo_warm_start_with_mse,
     )
 
     train_label_result = _build_regret_labels_for_frame(
@@ -202,16 +180,6 @@ def run_caiso_regret_shap_case_study(
         target_columns=(REGRET_TARGET_COLUMN,),
         random_state=config.random_state,
         n_jobs=config.n_jobs,
-        mlp_hidden_layer_sizes=config.mlp_hidden_layer_sizes,
-        mlp_max_iter=config.mlp_max_iter,
-        learning_rate=(
-            DEFAULT_TORCH_LEARNING_RATE
-            if config.learning_rate is None and regret_model_name == "torch_mlp"
-            else config.learning_rate
-        ),
-        storage_parameters=config.storage_parameters,
-        training_verbose=config.training_verbose,
-        training_log_every=config.training_log_every,
     )
 
     base_coalition_evaluator = BackgroundMarginalCoalitionEvaluator(
@@ -452,25 +420,10 @@ def run_caiso_regret_shap_case_study(
         "storage_parameters": dataclasses.asdict(config.storage_parameters),
         "random_state": config.random_state,
         "n_jobs": config.n_jobs,
-        "mlp_hidden_layer_sizes": list(config.mlp_hidden_layer_sizes),
-        "mlp_max_iter": config.mlp_max_iter,
-        "learning_rate": config.learning_rate,
-        "mse_learning_rate": config.mse_learning_rate,
-        "spo_learning_rate": config.spo_learning_rate,
-        "training_verbose": config.training_verbose,
-        "training_log_every": config.training_log_every,
-        "spo_processes": config.spo_processes,
-        "spo_warm_start_with_mse": config.spo_warm_start_with_mse,
         "solver_params": solver_params,
         "objective_tolerance": config.objective_tolerance,
         "runtime_seconds": total_runtime_seconds,
     }
-    if config.model_name == "spo_mlp":
-        run_metadata["regret_model_note"] = (
-            "The first-stage model uses SPO+ training, but the second-stage "
-            "regret predictor uses the same torch MLP architecture with an MSE "
-            "regret target because SPO+ is defined for dispatch-price targets."
-        )
 
     return CaisoRegretShapCaseStudyOutputs(
         daily_shap=daily_shap,
@@ -517,9 +470,9 @@ def write_caiso_regret_shap_case_study_outputs(
 
 
 def resolve_regret_model_name(base_model_name: str) -> str:
-    if base_model_name == "spo_mlp":
-        return "torch_mlp"
-    return base_model_name
+    if base_model_name != "xgb":
+        raise ValueError("Only model_name='xgb' is supported for regret SHAP.")
+    return "xgb"
 
 
 def _build_regret_labels_for_frame(

@@ -33,28 +33,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--n-jobs", type=int, default=1)
-    parser.add_argument(
-        "--mlp-hidden-units",
-        type=int,
-        default=256,
-        help="Hidden width for the shallow MLP used when --model mlp, --model torch_mlp, or --model spo_mlp.",
-    )
-    parser.add_argument(
-        "--mlp-max-iter",
-        type=int,
-        default=1000,
-        help="Maximum training iterations for the shallow MLP used when --model mlp, --model torch_mlp, or --model spo_mlp.",
-    )
-    parser.add_argument("--mlp-dropout", type=float, default=0.0)
-    parser.add_argument("--mlp-weight-decay", type=float, default=0.0)
-    parser.add_argument("--mlp-batch-size", type=int, default=None)
-    parser.add_argument("--mlp-early-stopping-patience", type=int, default=None)
-    parser.add_argument(
-        "--mlp-activation",
-        choices=("relu", "gelu"),
-        default="relu",
-    )
-    parser.add_argument("--mlp-batch-norm", action="store_true")
     parser.add_argument("--xgb-n-estimators", type=int, default=100)
     parser.add_argument("--xgb-max-depth", type=int, default=3)
     parser.add_argument("--xgb-learning-rate", type=float, default=0.05)
@@ -62,56 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xgb-colsample-bytree", type=float, default=0.9)
     parser.add_argument("--xgb-reg-lambda", type=float, default=1.0)
     parser.add_argument("--xgb-verbosity", type=int, default=0)
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=None,
-        help=(
-            "Shared learning rate for torch_mlp and spo_mlp. "
-            "For spo_mlp, this applies to both phases unless overridden by "
-            "--mse-lr or --spo-lr."
-        ),
-    )
-    parser.add_argument(
-        "--mse-lr",
-        type=float,
-        default=None,
-        help="Optional MSE-phase learning rate override for --model spo_mlp.",
-    )
-    parser.add_argument(
-        "--spo-lr",
-        type=float,
-        default=None,
-        help="Optional SPO+-phase learning rate override for --model spo_mlp.",
-    )
-    parser.add_argument(
-        "--training-verbose",
-        action="store_true",
-        help="Print progress logs during torch_mlp or spo_mlp training.",
-    )
-    parser.add_argument(
-        "--training-log-every",
-        type=int,
-        default=None,
-        help="Log every N training epochs when --training-verbose is enabled.",
-    )
-    parser.add_argument(
-        "--spo-processes",
-        type=int,
-        default=None,
-        help=(
-            "Number of PyEPO worker processes for SPO+ training. "
-            "Defaults to a small multicore setting when --model spo_mlp."
-        ),
-    )
-    parser.add_argument(
-        "--spo-warm-start-with-mse",
-        action="store_true",
-        help=(
-            "For --model spo_mlp, run an MSE pretraining phase for "
-            "--mlp-max-iter epochs before the SPO+ phase."
-        ),
-    )
     parser.add_argument("--solver-seed", type=int, default=0)
     parser.add_argument("--mip-gap", type=float, default=0.0)
     parser.add_argument("--mip-gap-abs", type=float, default=1e-9)
@@ -237,14 +165,6 @@ def main() -> None:
         model_name=args.model,
         random_state=args.random_state,
         n_jobs=args.n_jobs,
-        mlp_hidden_layer_sizes=(args.mlp_hidden_units,),
-        mlp_max_iter=args.mlp_max_iter,
-        mlp_dropout=args.mlp_dropout,
-        mlp_weight_decay=args.mlp_weight_decay,
-        mlp_batch_size=args.mlp_batch_size,
-        mlp_early_stopping_patience=args.mlp_early_stopping_patience,
-        mlp_activation=args.mlp_activation,
-        mlp_batch_norm=args.mlp_batch_norm,
         xgb_n_estimators=args.xgb_n_estimators,
         xgb_max_depth=args.xgb_max_depth,
         xgb_learning_rate=args.xgb_learning_rate,
@@ -252,13 +172,6 @@ def main() -> None:
         xgb_colsample_bytree=args.xgb_colsample_bytree,
         xgb_reg_lambda=args.xgb_reg_lambda,
         xgb_verbosity=args.xgb_verbosity,
-        learning_rate=args.lr,
-        mse_learning_rate=args.mse_lr,
-        spo_learning_rate=args.spo_lr,
-        training_verbose=args.training_verbose,
-        training_log_every=args.training_log_every,
-        spo_processes=args.spo_processes,
-        spo_warm_start_with_mse=args.spo_warm_start_with_mse,
         solver_seed=args.solver_seed,
         mip_gap=args.mip_gap,
         mip_gap_abs=args.mip_gap_abs,

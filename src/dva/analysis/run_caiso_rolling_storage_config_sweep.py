@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-workers", type=int, default=1)
     parser.add_argument(
         "--model-family",
-        choices=("all", "xgb", "nn", "torch_mlp"),
+        choices=("all", "xgb"),
         default="xgb",
     )
     parser.add_argument("--model-id", action="append", default=None)

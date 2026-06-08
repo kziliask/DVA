@@ -29,39 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         choices=SUPPORTED_MODEL_NAMES,
-        default="mlp",
-        help="First-stage price model. The regret model reuses the same architecture.",
+        default="xgb",
+        help="First-stage price model. The regret model uses XGBoost.",
     )
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--n-jobs", type=int, default=1)
-    parser.add_argument(
-        "--mlp-hidden-units",
-        type=int,
-        default=256,
-        help="Hidden width for mlp, torch_mlp, and spo_mlp architectures.",
-    )
-    parser.add_argument(
-        "--mlp-max-iter",
-        type=int,
-        default=1000,
-        help="Maximum training iterations for mlp, torch_mlp, and spo_mlp architectures.",
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=None,
-        help=(
-            "Shared learning rate for torch_mlp and spo_mlp. "
-            "For spo_mlp, this applies to both first-stage phases unless "
-            "overridden by --mse-lr or --spo-lr."
-        ),
-    )
-    parser.add_argument("--mse-lr", type=float, default=None)
-    parser.add_argument("--spo-lr", type=float, default=None)
-    parser.add_argument("--training-verbose", action="store_true")
-    parser.add_argument("--training-log-every", type=int, default=None)
-    parser.add_argument("--spo-processes", type=int, default=None)
-    parser.add_argument("--spo-warm-start-with-mse", action="store_true")
     parser.add_argument("--solver-seed", type=int, default=0)
     parser.add_argument("--mip-gap", type=float, default=0.0)
     parser.add_argument("--mip-gap-abs", type=float, default=1e-9)
@@ -139,15 +111,6 @@ def main() -> None:
         model_name=args.model,
         random_state=args.random_state,
         n_jobs=args.n_jobs,
-        mlp_hidden_layer_sizes=(args.mlp_hidden_units,),
-        mlp_max_iter=args.mlp_max_iter,
-        learning_rate=args.lr,
-        mse_learning_rate=args.mse_lr,
-        spo_learning_rate=args.spo_lr,
-        training_verbose=args.training_verbose,
-        training_log_every=args.training_log_every,
-        spo_processes=args.spo_processes,
-        spo_warm_start_with_mse=args.spo_warm_start_with_mse,
         solver_seed=args.solver_seed,
         mip_gap=args.mip_gap,
         mip_gap_abs=args.mip_gap_abs,

@@ -11,7 +11,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from dva.analysis.evaluation_metrics import (
@@ -191,49 +190,6 @@ class CaisoShapCaseStudyConfig:
     interaction_order: int | None = None
     interaction_method: str = DEFAULT_INTERACTION_METHOD
     parameter_player_spec: ParameterPlayerSpec | None = None
-
-
-class ExactRandomForestCoalitionEvaluator:
-    def __init__(
-        self,
-        model: RandomForestRegressor,
-        feature_names: Sequence[str],
-    ) -> None:
-        if not hasattr(model, "estimators_"):
-            raise ValueError("model must be a fitted RandomForestRegressor.")
-
-        self.model = model
-        self.feature_names = tuple(feature_names)
-        self.feature_count = len(self.feature_names)
-        self.coalition_count = 1 << self.feature_count
-        self.full_mask = self.coalition_count - 1
-        self.output_count = int(getattr(model, "n_outputs_", 1))
-        model_feature_count = int(getattr(model, "n_features_in_", self.feature_count))
-        if model_feature_count != self.feature_count:
-            raise ValueError(
-                "feature_names length must match model.n_features_in_. "
-                f"Got {self.feature_count} names for {model_feature_count} features."
-            )
-
-    def evaluate_all_coalitions(
-        self,
-        observation: pd.Series | Sequence[float] | np.ndarray,
-    ) -> np.ndarray:
-        x = _resolve_observation_array(observation, self.feature_names)
-        coalition_predictions = np.zeros(
-            (self.coalition_count, self.output_count),
-            dtype=float,
-        )
-        for coalition_mask in range(self.coalition_count):
-            coalition_predictions[coalition_mask] = self._predict_for_mask(x, coalition_mask)
-        return coalition_predictions
-
-    def _predict_for_mask(self, x: np.ndarray, coalition_mask: int) -> np.ndarray:
-        tree_predictions = [
-            _evaluate_tree_expectation(estimator.tree_, x, coalition_mask)
-            for estimator in self.model.estimators_
-        ]
-        return np.mean(np.stack(tree_predictions, axis=0), axis=0)
 
 
 class BackgroundMarginalCoalitionEvaluator:
@@ -2176,61 +2132,6 @@ def _format_player_subset(
     player_names: Sequence[str],
 ) -> str:
     return "|".join(sorted(player_names[player_idx] for player_idx in subset))
-
-
-def _evaluate_tree_expectation(
-    tree: Any,
-    observation: np.ndarray,
-    coalition_mask: int,
-) -> np.ndarray:
-    features = tree.feature
-    thresholds = tree.threshold
-    children_left = tree.children_left
-    children_right = tree.children_right
-    weights = tree.weighted_n_node_samples
-    values = np.asarray(tree.value[:, :, 0], dtype=float)
-    leaf_indicator = -2
-    memo: dict[tuple[int, int], np.ndarray] = {}
-
-    def recurse(node_idx: int, active_mask: int) -> np.ndarray:
-        memo_key = (node_idx, active_mask)
-        if memo_key in memo:
-            return memo[memo_key]
-
-        feature_idx = int(features[node_idx])
-        if feature_idx == leaf_indicator:
-            result = values[node_idx].copy()
-            memo[memo_key] = result
-            return result
-
-        left_child = int(children_left[node_idx])
-        right_child = int(children_right[node_idx])
-        if active_mask & (1 << feature_idx):
-            if observation[feature_idx] <= thresholds[node_idx]:
-                result = recurse(left_child, active_mask)
-            else:
-                result = recurse(right_child, active_mask)
-            memo[memo_key] = result
-            return result
-
-        left_weight = float(weights[left_child])
-        right_weight = float(weights[right_child])
-        weight_sum = left_weight + right_weight
-        if weight_sum <= 0:
-            result = 0.5 * (
-                recurse(left_child, active_mask) + recurse(right_child, active_mask)
-            )
-            memo[memo_key] = result
-            return result
-
-        result = (
-            left_weight * recurse(left_child, active_mask)
-            + right_weight * recurse(right_child, active_mask)
-        ) / weight_sum
-        memo[memo_key] = result
-        return result
-
-    return recurse(0, coalition_mask)
 
 
 def _subset_weights(feature_count: int) -> tuple[float, ...]:
