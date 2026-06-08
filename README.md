@@ -124,3 +124,7 @@ Generated launchers use `scripts/cluster/env.sh`, run `uv sync --frozen`,
 write logs under `logs/cluster`, and write experiment artifacts under
 `results/`. Set `OPTIMIZATION_SOLVER=gurobi` for Gurobi-backed EMS jobs; the
 cluster environment will sync the optional Gurobi extra automatically.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
